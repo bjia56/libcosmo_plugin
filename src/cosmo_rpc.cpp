@@ -102,7 +102,8 @@ private:
 
 struct RPCPeer::impl {
     void* dynlibHandle = nullptr;
-    void (*initializeRPC)(int);
+    void (*cosmo_rpc_initialization)(int);
+    void (*cosmo_rpc_teardown)();
     SocketManager* mgr = nullptr;
 };
 
@@ -114,10 +115,16 @@ RPCPeer::RPCPeer(const std::string& dynlibPath) {
         throw std::runtime_error("Failed to load shared object: " + std::string(cosmo_dlerror()));
     }
 
-    // Get the address of the initializeRPC function
-    pimpl->initializeRPC = reinterpret_cast<void(*)(int)>(cosmo_dlsym(dynlibHandle, "initializeRPC"));
-    if (!pimpl->initializeRPC) {
-        throw std::runtime_error("Failed to find symbol: initializeRPC: " + std::string(cosmo_dlerror()));
+    // Get the address of the cosmo_rpc_initialization function
+    pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int)>(cosmo_dlsym(dynlibHandle, "cosmo_rpc_initialization"));
+    if (!pimpl->cosmo_rpc_initialization) {
+        throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
+    }
+
+    // Get the address of the cosmo_rpc_teardown function
+    pimpl->cosmo_rpc_teardown = reinterpret_cast<void(*)()>(cosmo_dlsym(dynlibHandle, "cosmo_rpc_teardown"));
+    if (!pimpl->cosmo_rpc_teardown) {
+        throw std::runtime_error("Failed to find symbol: cosmo_rpc_teardown: " + std::string(cosmo_dlerror()));
     }
 
     // Create our socket manager
@@ -144,6 +151,7 @@ RPCPeer::~RPCPeer() {
     }
 
     if (pimpl->dynlibHandle) {
+        pimpl->cosmo_rpc_teardown();
         cosmo_dlclose(pimpl->dynlibHandle);
     }
 }
@@ -154,6 +162,7 @@ RPCPeer::~RPCPeer() {
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <unistd.h>
 
 #if defined(_MSC_VER)
@@ -178,7 +187,14 @@ RPCPeer::~RPCPeer() {
     }
 }
 
-extern "C" EXPORT void initializeRPC(int port) {
+struct SharedObjectContext {
+    RPCPeer *peer;
+    std::thread *messageThread;
+};
+
+SharedObjectContext *sharedObjectContext = nullptr;
+
+extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     // Step 1: Create a socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
@@ -217,7 +233,7 @@ extern "C" EXPORT void initializeRPC(int port) {
     *static_cast<int*>(transport.context) = sockfd;
 
     // Step 5: Create an RPCPeer using the Transport
-    RPCPeer *peer = new RPCPeer(transport); // leak
+    RPCPeer *peer = new RPCPeer(transport);
 
     // Step 6: Pass the RPCPeer to the shared library initialization function
     try {
@@ -226,6 +242,31 @@ extern "C" EXPORT void initializeRPC(int port) {
         std::cerr << "Error during shared library initialization: " << ex.what() << std::endl;
         close(sockfd);
         exit(EXIT_FAILURE);
+    }
+
+    // Step 7: Process incoming messages in a thread
+    std::thread *messageThread = new std::thread([peer]() {
+        try {
+            peer->processMessages();
+        } catch (const std::exception& ex) {
+            std::cerr << "Error processing messages: " << ex.what() << std::endl;
+        }
+    });
+
+    // Step 8: Store the shared object context
+    sharedObjectContext = new SharedObjectContext{peer, messageThread};
+}
+
+extern "C" EXPORT void cosmo_rpc_teardown() {
+    if (sharedObjectContext) {
+        if (sharedObjectContext->peer) {
+            delete sharedObjectContext->peer;
+        }
+        if (sharedObjectContext->messageThread) {
+            sharedObjectContext->messageThread->join();
+            delete sharedObjectContext->messageThread;
+        }
+        delete sharedObjectContext;
     }
 }
 
