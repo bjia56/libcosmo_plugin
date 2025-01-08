@@ -113,7 +113,7 @@ jobs:
           cd tests/${{ inputs.test }}
           cmake -B build
           cmake --build build --parallel 4
-          
+
           cp ${{ github.workspace }}/cosmo.com .
           ./cosmo.com build/libnative.so
 
@@ -135,7 +135,7 @@ jobs:
         with:
           sync: nfs
           prepare: |
-            /usr/sbin/pkg_add cmake
+            /usr/sbin/pkg_add cmake clang
 
       - name: Build native and test
         if: ${{ matrix.os == 'FreeBSD' }}
@@ -153,7 +153,7 @@ jobs:
         shell: netbsd {0}
         run: |
           cd ${{ github.workspace }}/tests/${{ inputs.test }}
-          cmake -B build
+          CC=clang CXX=clang++ cmake -B build
           cmake --build build --parallel 4
 
           cp ${{ github.workspace }}/cosmo.com .
