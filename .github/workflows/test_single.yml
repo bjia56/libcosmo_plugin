@@ -42,16 +42,14 @@ jobs:
       - name: Build exe ${{ inputs.test }}
         run: |
           cd tests/${{ inputs.test }}
-          mkdir -p build-cosmo
-          cd build-cosmo
-          CC=cosmocc CXX=cosmoc++ cmake .. -DBUILD_EXE=ON
-          make -j
+          CC=cosmocc CXX=cosmoc++ cmake -B build
+          cmake --build build --parallel
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.test }}-exe
-          path: tests/${{ inputs.test }}/build-cosmo/cosmo.com
+          path: tests/${{ inputs.test }}/build/cosmo.com
 
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3
@@ -106,14 +104,12 @@ jobs:
         shell: bash
         run: |
           cd tests/${{ inputs.test }}
-          mkdir -p build-native
-          cd build-native
-          cmake ..
-          make -j
+          cmake -B build
+          cmake --build build --parallel
 
           cd ..
           cp ${{ github.workspace }}/cosmo.com .
-          ./cosmo.com build-native/libnative.so
+          ./cosmo.com build/libnative.so
 
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3
