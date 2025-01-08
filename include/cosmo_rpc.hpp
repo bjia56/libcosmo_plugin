@@ -105,10 +105,12 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     // Serialize the arguments into a JSON array
     std::vector<rfl::Generic> params;
     params.resize(sizeof...(Args));
+
+    // https://stackoverflow.com/a/60136761
     int j = 0;
-    for (auto i : std::initializer_list<std::common_type_t<Args...>>{args...}) {
-        params[j++] = rfl::to_generic(i);
-    }
+    ([&] {
+        params[j++] = rfl::to_generic(args);
+    }(), ...);
 
     // Serialize the RPC request
     Protocol::Message msg = Protocol::serializeRequest(requestID, method, params);
