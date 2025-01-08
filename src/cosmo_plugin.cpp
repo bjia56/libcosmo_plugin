@@ -1,4 +1,4 @@
-#include "cosmo_dlrpc.hpp"
+#include "cosmo_plugin.hpp"
 
 #ifdef __COSMOPOLITAN__
 

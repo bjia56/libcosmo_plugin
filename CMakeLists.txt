@@ -5,7 +5,7 @@ set(COSMORPC_INCLUDE_DIRS
     PARENT_SCOPE
 )
 set(COSMORPC_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/cosmo_dlrpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cosmo_plugin.cpp
 
     # https://rfl.getml.com/install/#option-4-include-source-files-into-your-own-build
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/reflect-cpp/src/reflectcpp.cpp

@@ -4,7 +4,7 @@ project(test)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-add_subdirectory(${PROJECT_SOURCE_DIR}/libcosmo_dlrpc)
+add_subdirectory(${PROJECT_SOURCE_DIR}/libcosmo_plugin)
 
 find_package (Threads REQUIRED)
 
