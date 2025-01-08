@@ -164,14 +164,22 @@ RPCPeer::~RPCPeer() {
 
 #else // __COSMOPOLITAN__
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib") // Link against Winsock library
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
+#include <cerrno>
+#endif
+
 #include <cstring>
 #include <iostream>
-#include <netinet/in.h>
 #include <string>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 
 #if defined(_MSC_VER)
     //  Microsoft
@@ -203,12 +211,32 @@ struct SharedObjectContext {
 SharedObjectContext *sharedObjectContext = nullptr;
 
 extern "C" EXPORT void cosmo_rpc_initialization(int port) {
+#ifdef _WIN32
+    // Initialize Winsock
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
+        exit(EXIT_FAILURE);
+    }
+#endif
+
     // Step 1: Create a socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int sockfd;
+#ifdef _WIN32
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
+        std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
+        WSACleanup();
+        exit(EXIT_FAILURE);
+    }
+    sockfd = static_cast<int>(sock); // Cast SOCKET to int for consistency
+#else
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
         exit(EXIT_FAILURE);
     }
+#endif
 
     // Step 2: Set up the server address structure for localhost
     sockaddr_in serverAddress{};
@@ -216,14 +244,25 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     serverAddress.sin_port = htons(port);
     if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
         std::cerr << "Invalid address or address not supported." << std::endl;
+#ifdef _WIN32
+        closesocket(sock);
+        WSACleanup();
+#else
         close(sockfd);
+#endif
         exit(EXIT_FAILURE);
     }
 
     // Step 3: Connect to the server
     if (connect(sockfd, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) {
+#ifdef _WIN32
+        std::cerr << "Failed to connect to server: " << WSAGetLastError() << std::endl;
+        closesocket(sock);
+        WSACleanup();
+#else
         std::cerr << "Failed to connect to server: " << strerror(errno) << std::endl;
         close(sockfd);
+#endif
         exit(EXIT_FAILURE);
     }
 
@@ -231,29 +270,42 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     Transport transport;
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
         int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        return send(sock, static_cast<const char*>(buffer), static_cast<int>(size), 0);
+#else
         return send(sock, buffer, size, 0);
+#endif
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
         int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        return recv(sock, static_cast<char*>(buffer), static_cast<int>(size), 0);
+#else
         return recv(sock, buffer, size, 0);
+#endif
     };
     transport.context = new int;
     *static_cast<int*>(transport.context) = sockfd;
 
     // Step 5: Create an RPCPeer using the Transport
-    RPCPeer *peer = new RPCPeer(transport);
+    RPCPeer* peer = new RPCPeer(transport);
 
     // Step 6: Pass the RPCPeer to the shared library initialization function
     try {
         sharedLibraryInitialization(peer);
     } catch (const std::exception& ex) {
         std::cerr << "Error during shared library initialization: " << ex.what() << std::endl;
+#ifdef _WIN32
+        closesocket(sock);
+        WSACleanup();
+#else
         close(sockfd);
+#endif
         exit(EXIT_FAILURE);
     }
 
     // Step 7: Process incoming messages in a thread
-    std::thread *messageThread = new std::thread([peer]() {
+    std::thread* messageThread = new std::thread([peer]() {
         try {
             peer->processMessages();
         } catch (const std::exception& ex) {
