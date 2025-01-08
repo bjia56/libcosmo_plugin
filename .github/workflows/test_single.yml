@@ -141,7 +141,7 @@ jobs:
         if: ${{ matrix.os == 'FreeBSD' }}
         shell: freebsd {0}
         run: |
-          cd ${{ github.workspace }}tests/${{ inputs.test }}
+          cd ${{ github.workspace }}/tests/${{ inputs.test }}
           cmake -B build
           cmake --build build --parallel
 
@@ -152,7 +152,7 @@ jobs:
         if: ${{ matrix.os == 'NetBSD' }}
         shell: netbsd {0}
         run: |
-          cd ${{ github.workspace }}tests/${{ inputs.test }}
+          cd ${{ github.workspace }}/tests/${{ inputs.test }}
           cmake -B build
           cmake --build build --parallel
 
