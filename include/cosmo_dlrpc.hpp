@@ -17,6 +17,7 @@ typedef SSIZE_T ssize_t;
 struct Transport {
     ssize_t (*write)(const void* buffer, size_t size, void* context);
     ssize_t (*read)(void* buffer, size_t size, void* context);
+    void (*close)(void* context);
     void* context; // User-provided context (e.g., socket, file descriptor)
 };
 

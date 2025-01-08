@@ -148,6 +148,10 @@ RPCPeer::RPCPeer(const std::string& dynlibPath) {
         SocketManager* mgr = static_cast<SocketManager*>(context);
         return recv(mgr->getSocketFD(), buffer, size, 0);
     };
+    transport.close = [](void* context) {
+        SocketManager* mgr = static_cast<SocketManager*>(context);
+        mgr->closeSocket();
+    };
     transport.context = pimpl->mgr;
 }
 
@@ -198,8 +202,8 @@ RPCPeer::~RPCPeer() {
 
 RPCPeer::~RPCPeer() {
     if (transport.context) {
-        int sockfd = *static_cast<int*>(transport.context);
-        close(sockfd);
+        transport.close(transport.context);
+        delete static_cast<int*>(transport.context);
     }
 }
 
@@ -282,6 +286,15 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
         return recv(sock, static_cast<char*>(buffer), static_cast<int>(size), 0);
 #else
         return recv(sock, buffer, size, 0);
+#endif
+    };
+    transport.close = [](void* context) {
+        int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        closesocket(sock);
+        WSACleanup();
+#else
+        close(sock);
 #endif
     };
     transport.context = new int;
