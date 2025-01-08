@@ -4,8 +4,7 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/include",
-                "${workspaceFolder}/cosmo/include"
+                "${workspaceFolder}/include"
             ],
             "defines": [
                 "__COSMOPOLITAN__"
