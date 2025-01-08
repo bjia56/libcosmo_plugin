@@ -7,7 +7,7 @@
 
 int main() {
     std::string cwd = std::filesystem::current_path();
-    std::string objectPath = cwd + "/native.so";
+    std::string objectPath = cwd + "/libnative.so";
 
     std::cout << "Connecting to shared library..." << std::endl;
     RPCPeer peer(objectPath);
