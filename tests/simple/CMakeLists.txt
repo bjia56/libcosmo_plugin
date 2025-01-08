@@ -25,5 +25,9 @@ else()
     target_include_directories(native PRIVATE
         ${COSMORPC_INCLUDE_DIRS}
     )
-    target_link_libraries(native PUBLIC Threads::Threads)
+    if(WIN32)
+        target_link_libraries(native PUBLIC Threads::Threads wsock32 ws2_32)
+    else()
+        target_link_libraries(native PUBLIC Threads::Threads)
+    endif()
 endif()
