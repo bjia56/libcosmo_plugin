@@ -1,0 +1,118 @@
+name: Build and run a single test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        required: true
+        type: string
+      debug_cosmo:
+        required: false
+        type: boolean
+      debug_native:
+        required: false
+        type: boolean
+  workflow_call:
+    inputs:
+      test:
+        required: true
+        type: string
+
+jobs:
+  build_exe:
+    name: Build exe ${{ inputs.test }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Load cosmocc version
+        run: |
+          version=$(cat .github/cosmocc_version.txt)
+          echo "cosmocc_version=${version}" >> "$GITHUB_ENV"
+
+      - name: Setup cosmocc
+        uses: bjia56/setup-cosmocc@v0.0.3
+        with:
+          version: ${{ env.cosmocc_version }}
+
+      - name: Build exe ${{ inputs.test }}
+        run: |
+          cd tests/${{ inputs.test }}
+          mkdir -p build-cosmo
+          cd build-cosmo
+          CC=cosmocc CXX=cosmoc++ cmake .. -DBUILD_EXE=ON
+          make -j
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.test }}-exe
+          path: tests/${{ inputs.test }}/build-cosmo/cosmo.com
+
+      - name: Interactive debugging
+        uses: fawazahmed0/action-debug-vscode@v3
+        if: ${{ always() && inputs.debug_cosmo }}
+
+  build_test_native:
+    name: Build-test native ${{ inputs.test }} ${{ matrix.os }} ${{ matrix.arch }}
+    needs: build_exe
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+            os: MacOS
+          - runner: ubuntu-latest
+            arch: x86_64
+            os: Linux
+          - runner: windows-latest
+            arch: x86_64
+            os: Windows
+
+    steps:
+      - name: Set up cosmocc
+        if: ${{ matrix.os == 'Linux' }}
+        uses: bjia56/setup-cosmocc@v0.0.3
+
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v2.0.2
+        with:
+          cmake-version: 3.31.3
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.test }}-exe
+          path: .
+
+      - name: Mark executable
+        shell: bash
+        run: |
+          chmod +x cosmo.com
+
+      - name: Build native and test
+        if: ${{ !contains(matrix.os, 'BSD') }}
+        shell: bash
+        run: |
+          cd tests/${{ inputs.test }}
+          mkdir -p build-native
+          cd build-native
+          cmake ..
+          make -j
+
+          cd ..
+          cp ${{ github.workspace }}/cosmo.com .
+          ./cosmo.com libnative.so
+
+      - name: Interactive debugging
+        uses: fawazahmed0/action-debug-vscode@v3
+        if: ${{ always() && inputs.debug_native }}
