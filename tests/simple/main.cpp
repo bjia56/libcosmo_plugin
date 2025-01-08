@@ -13,9 +13,14 @@ struct MyData {
 
 using namespace std::literals::string_literals;
 
-int main() {
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " <shared library path>" << std::endl;
+        return 1;
+    }
+
     std::string cwd = std::filesystem::current_path();
-    std::string objectPath = cwd + "/libnative.so";
+    std::string objectPath = cwd + "/" + argv[1];
 
     std::cout << "Connecting to shared library..." << std::endl;
     RPCPeer peer(objectPath);

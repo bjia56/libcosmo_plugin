@@ -20,4 +20,4 @@ cd ..
 
 cp build-cosmo/cosmo.com .
 cp build-gcc/libnative.so .
-./cosmo.com
+./cosmo.com libnative.so
