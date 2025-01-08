@@ -31,8 +31,12 @@ public:
         // Initialize the server address structure
         memset(&serverAddress, 0, sizeof(serverAddress));
         serverAddress.sin_family = AF_INET;
-        serverAddress.sin_addr.s_addr = INADDR_ANY; // Bind to all available interfaces
-        serverAddress.sin_port = 0;                 // Let the OS choose a random port
+        serverAddress.sin_port = 0; // Let the OS choose a random port
+
+        // Bind to 127.0.0.1
+        if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
+            throw std::runtime_error("Failed to set server address to 127.0.0.1");
+        }
     }
 
     ~SocketManager() {
@@ -246,12 +250,14 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(port);
-    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
-        std::cerr << "Invalid address or address not supported." << std::endl;
 #ifdef _WIN32
+    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) != 1) {
+        std::cerr << "Invalid address or address not supported." << std::endl;
         closesocket(sock);
         WSACleanup();
 #else
+    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
+        std::cerr << "Invalid address or address not supported." << std::endl;
         close(sockfd);
 #endif
         exit(EXIT_FAILURE);
