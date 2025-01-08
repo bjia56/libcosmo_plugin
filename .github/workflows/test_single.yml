@@ -106,8 +106,7 @@ jobs:
           cd tests/${{ inputs.test }}
           cmake -B build
           cmake --build build --parallel
-
-          cd ..
+          
           cp ${{ github.workspace }}/cosmo.com .
           ./cosmo.com build/libnative.so
 
