@@ -42,7 +42,7 @@ jobs:
       - name: Build exe ${{ inputs.test }}
         run: |
           cd tests/${{ inputs.test }}
-          CC=cosmocc CXX=cosmoc++ cmake -B build
+          CC=cosmocc CXX=cosmoc++ cmake -B build -DBUILD_EXE
           cmake --build build --parallel
 
       - name: Upload artifact
