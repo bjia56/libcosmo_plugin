@@ -6,22 +6,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_subdirectory(${PROJECT_SOURCE_DIR}/libcosmo_dlrpc)
 
+find_package (Threads REQUIRED)
+
 if(BUILD_EXE)
     add_executable(cosmo.com
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${COSMORPC_SOURCES}
     )
-
     target_include_directories(cosmo.com PRIVATE
         ${COSMORPC_INCLUDE_DIRS}
     )
+    target_link_libraries(cosmo.com PUBLIC Threads::Threads)
 else()
     add_library(native SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${COSMORPC_SOURCES}
     )
-
     target_include_directories(native PRIVATE
         ${COSMORPC_INCLUDE_DIRS}
     )
+    target_link_libraries(native PUBLIC Threads::Threads)
 endif()
