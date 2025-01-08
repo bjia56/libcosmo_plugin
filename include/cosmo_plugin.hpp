@@ -14,16 +14,25 @@
 typedef SSIZE_T ssize_t;
 #endif
 
-struct Transport {
-    ssize_t (*write)(const void* buffer, size_t size, void* context);
-    ssize_t (*read)(void* buffer, size_t size, void* context);
-    void (*close)(void* context);
-    void* context; // User-provided context (e.g., socket, file descriptor)
-};
+#ifndef __COSMOPOLITAN__
+extern "C" void cosmo_rpc_initialization(int toPlugin, int toHost);
+#endif // __COSMOPOLITAN__
 
-class Protocol {
+class RPCPeer {
 public:
+    // Register a handler for a specific method
+    template <typename ReturnType, typename... Args>
+    void registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler);
 
+    // Call a method on the peer and get a response
+    template <typename ReturnType, typename... Args>
+    ReturnType call(const std::string& method, Args&&... args);
+
+    // Process incoming requests and responses
+    void processMessages();
+
+private:
+    // Serialize and deserialize RPC messages
     struct Message {
         enum class Type {
             Request,
@@ -37,38 +46,31 @@ public:
         std::string error;
     };
 
-    // Serialize an RPC request
-    static Message serializeRequest(const std::string& id, const std::string& method, const std::vector<rfl::Generic>& params);
+    // Construct an RPC request
+    static Message constructRequest(const std::string& id, const std::string& method, const std::vector<rfl::Generic>& params);
 
-    // Serialize an RPC response
-    static Message serializeResponse(const std::string& id, const rfl::Generic& result, const std::string& error);
+    // Construct an RPC response
+    static Message constructResponse(const std::string& id, const rfl::Generic& result, const std::string& error);
+
+    // Serialize an RPC message (request or response)
+    static std::string serialize(const Message& message);
 
     // Deserialize an RPC message (request or response)
     static Message deserialize(const std::string& message);
-};
 
-class RPCPeer {
-public:
-#ifdef __COSMOPOLITAN__
-    RPCPeer(const std::string& dynlibPath);
-#endif
+    // Abstract Transport implementation
+    struct Transport {
+        ssize_t (*write)(const void* buffer, size_t size, void* context);
+        ssize_t (*read)(void* buffer, size_t size, void* context);
+        void (*close)(void* context);
+        void* context; // User-provided context (e.g., socket, file descriptor)
+    };
 
-    RPCPeer(Transport transport);
-    ~RPCPeer();
+    // toHost is a connection where Host is the server
+    Transport toHost;
 
-    // Register a handler for a specific method
-    template <typename ReturnType, typename... Args>
-    void registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler);
-
-    // Call a method on the peer and get a response
-    template <typename ReturnType, typename... Args>
-    ReturnType call(const std::string& method, Args&&... args);
-
-    // Process incoming requests and responses
-    void processMessages();
-
-private:
-    Transport transport;
+    // toPlugin is a connection where Plugin is the server
+    Transport toPlugin;
 
     // Handlers for incoming requests
     std::unordered_map<std::string, std::function<rfl::Generic(const std::vector<rfl::Generic>&)>> handlers;
@@ -76,16 +78,57 @@ private:
     // Mutex for thread safety
     std::mutex handlersMutex;
 
-    // Helper methods
-    void sendMessage(const std::string& message);
-    std::string receiveMessage();
-    void processRequest(const Protocol::Message& request);
+    // Helper messages to send and receive data. Uses the appropriate transport
+    // depending on what role the instance is playing (Host or Plugin).
+    void sendMessage(const std::string& message, Transport& transport);
+    std::string receiveMessage(Transport& transport);
+    void processRequest(const Message& request);
+    virtual Transport &getOutboundTransport() = 0;
+    virtual Transport &getInboundTransport() = 0;
 
 #ifdef __COSMOPOLITAN__
+    friend class PluginHost;
+#else
+    friend class Plugin;
+    friend void cosmo_rpc_initialization(int toPlugin, int toHost);
+#endif // __COSMOPOLITAN__
+};
+
+#ifdef __COSMOPOLITAN__
+
+class PluginHost : public RPCPeer {
+public:
+    PluginHost(const std::string& dynlibPath);
+    ~PluginHost();
+
+    void initialize();
+
+private:
+    virtual Transport &getOutboundTransport() override { return toPlugin; }
+    virtual Transport &getInboundTransport() override { return toHost; }
+
+    std::string dynlibPath;
+
     struct impl;
     std::unique_ptr<impl> pimpl;
-#endif
 };
+
+#else
+
+class Plugin : public RPCPeer {
+public:
+    ~Plugin();
+
+private:
+    Plugin();
+
+    virtual Transport &getOutboundTransport() override { return toHost; }
+    virtual Transport &getInboundTransport() override { return toPlugin; }
+
+    friend void cosmo_rpc_initialization(int toPlugin, int toHost);
+};
+
+#endif // __COSMOPOLITAN__
 
 template <typename ReturnType, typename... Args>
 void RPCPeer::registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler) {
@@ -119,15 +162,15 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }(), ...);
 
     // Serialize the RPC request
-    Protocol::Message msg = Protocol::serializeRequest(requestID, method, params);
-    std::string request = rfl::json::write(msg);
+    Message msg = constructRequest(requestID, method, params);
+    std::string request = serialize(msg);
 
     // Send the request to the peer
-    sendMessage(request);
+    sendMessage(request, getOutboundTransport());
 
     // Wait for the response
-    std::string response = receiveMessage();
-    Protocol::Message jsonResponse = Protocol::deserialize(response);
+    std::string response = receiveMessage(getOutboundTransport());
+    Message jsonResponse = deserialize(response);
 
     // Validate the response ID
     if (jsonResponse.id != requestID) {
@@ -147,7 +190,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
 #ifndef __COSMOPOLITAN__
 
 // Must be defined in the shared object
-void sharedLibraryInitialization(RPCPeer* peer);
+void plugin_initializer(Plugin* plugin);
 
 #endif // __COSMOPOLITAN__
 

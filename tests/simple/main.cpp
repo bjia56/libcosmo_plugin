@@ -23,16 +23,17 @@ int main(int argc, char *argv[]) {
     std::string objectPath = cwd + "/" + argv[1];
 
     std::cout << "Connecting to shared library..." << std::endl;
-    RPCPeer peer(objectPath);
+    PluginHost plugin(objectPath);
+    plugin.initialize();
 
     std::cout << "Calling remote function 'add'..." << std::endl;
-    int result = peer.call<int>("add", 2, 3);
+    int result = plugin.call<int>("add", 2, 3);
 
     std::cout << "Result: " << result << std::endl;
     assert(result == 5);
 
     std::cout << "Calling remote function 'create'..." << std::endl;
-    MyData data = peer.call<MyData>("create", 10, "20"s);
+    MyData data = plugin.call<MyData>("create", 10, "20"s);
 
     std::cout << "Result: {" << data.a << ", " << data.b << "}" << std::endl;
     assert(data.a == 10);
@@ -43,11 +44,11 @@ int main(int argc, char *argv[]) {
 
 #else
 
-void sharedLibraryInitialization(RPCPeer *peer) {
-    peer->registerHandler("add", std::function([](int a, int b) -> int {
+void plugin_initializer(Plugin *plugin) {
+    plugin->registerHandler("add", std::function([](int a, int b) -> int {
         return a + b;
     }));
-    peer->registerHandler("create", std::function([](int a, std::string b) -> MyData {
+    plugin->registerHandler("create", std::function([](int a, std::string b) -> MyData {
         return MyData{a, b};
     }));
 }
