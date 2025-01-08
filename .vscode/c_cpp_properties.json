@@ -4,7 +4,8 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/include"
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/third_party/reflect-cpp/include"
             ],
             "defines": [
                 "__COSMOPOLITAN__"

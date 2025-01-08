@@ -1,5 +1,6 @@
 set(COSMORPC_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/reflect-cpp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/reflect-cpp/include/rfl/thirdparty
     PARENT_SCOPE
 )

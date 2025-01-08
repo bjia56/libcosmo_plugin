@@ -6,8 +6,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "rfl/json.hpp"
-#include "rfl.hpp"
+#include <rfl/json.hpp>
+#include <rfl.hpp>
 
 #if defined(_MSC_VER)
 #include <BaseTsd.h>
