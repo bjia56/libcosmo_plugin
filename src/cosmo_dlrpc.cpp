@@ -364,11 +364,15 @@ std::string RPCPeer::receiveMessage() {
     char buffer[1024];
     ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
 
-    if (bytesReceived == -1) {
-        throw std::runtime_error("Failed to receive message.");
-    } else if (bytesReceived == 0) {
-        throw std::runtime_error("Connection closed by peer.");
+#ifdef _WIN32
+    if (bytesReceived == SOCKET_ERROR) {
+        return "";
     }
+#else
+    if (bytesReceived <= 0) {
+        return "";
+    }
+#endif
 
     buffer[bytesReceived] = '\0';
     return std::string(buffer);
@@ -377,6 +381,11 @@ std::string RPCPeer::receiveMessage() {
 void RPCPeer::processMessages() {
     while (true) {
         std::string message = receiveMessage();
+        if (message.empty()) {
+            // connection aborted, shut down
+            break;
+        }
+
         Protocol::Message jsonMessage = Protocol::deserialize(message);
 
         if (!jsonMessage.method.empty()) {
