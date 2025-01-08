@@ -121,13 +121,13 @@ RPCPeer::RPCPeer(const std::string& dynlibPath) {
     }
 
     // Get the address of the cosmo_rpc_initialization function
-    pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int)>(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization"));
+    pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
     if (!pimpl->cosmo_rpc_initialization) {
         throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
     }
 
     // Get the address of the cosmo_rpc_teardown function
-    pimpl->cosmo_rpc_teardown = reinterpret_cast<void(*)()>(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_teardown"));
+    pimpl->cosmo_rpc_teardown = reinterpret_cast<void(*)()>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_teardown")));
     if (!pimpl->cosmo_rpc_teardown) {
         throw std::runtime_error("Failed to find symbol: cosmo_rpc_teardown: " + std::string(cosmo_dlerror()));
     }
