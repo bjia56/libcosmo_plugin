@@ -120,8 +120,12 @@ jobs:
           cmake -B build
           cmake --build build --parallel 4
 
-          cp ${{ github.workspace }}/cosmo.com .
-          ./cosmo.com build/libnative.so
+          cp ../../cosmo.com .
+          if [[ "${{ matrix.os }}" == "Windows" ]]; then
+            ./cosmo.com build/native.dll
+          else
+            ./cosmo.com build/libnative.so
+          fi
 
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3
@@ -151,7 +155,7 @@ jobs:
           cmake -B build
           cmake --build build --parallel 4
 
-          cp ${{ github.workspace }}/cosmo.com .
+          cp ../../cosmo.com .
           ./cosmo.com build/libnative.so
 
       - name: Build native and test
@@ -162,5 +166,5 @@ jobs:
           CC=clang CXX=clang++ cmake -B build
           cmake --build build --parallel 4
 
-          cp ${{ github.workspace }}/cosmo.com .
+          cp ../../cosmo.com .
           ./cosmo.com build/libnative.so
