@@ -72,6 +72,12 @@ jobs:
           - runner: windows-latest
             arch: x86_64
             os: Windows
+          - runner: ubuntu-latest
+            arch: x86_64
+            os: FreeBSD
+          - runner: ubuntu-latest
+            arch: x86_64
+            os: NetBSD
 
     steps:
       - name: Set up cosmocc
@@ -79,6 +85,7 @@ jobs:
         uses: bjia56/setup-cosmocc@v0.0.3
 
       - name: Setup cmake
+        if: ${{ !contains(matrix.os, 'BSD') }}
         uses: jwlawson/actions-setup-cmake@v2.0.2
         with:
           cmake-version: 3.31.3
@@ -113,3 +120,41 @@ jobs:
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3
         if: ${{ always() && inputs.debug_native }}
+
+      - name: Start VM
+        if: ${{ matrix.os == 'FreeBSD' }}
+        uses: vmactions/freebsd-vm@v1
+        with:
+          sync: nfs
+          prepare: |
+            pkg install -y cmake
+
+      - name: Start VM
+        if: ${{ matrix.os == 'NetBSD' }}
+        uses: vmactions/netbsd-vm@v1
+        with:
+          sync: nfs
+          prepare: |
+            /usr/sbin/pkg_add cmake
+
+      - name: Build native and test
+        if: ${{ matrix.os == 'FreeBSD' }}
+        shell: freebsd {0}
+        run: |
+          cd ${{ github.workspace }}tests/${{ inputs.test }}
+          cmake -B build
+          cmake --build build --parallel
+
+          cp ${{ github.workspace }}/cosmo.com .
+          ./cosmo.com build/libnative.so
+
+      - name: Build native and test
+        if: ${{ matrix.os == 'NetBSD' }}
+        shell: netbsd {0}
+        run: |
+          cd ${{ github.workspace }}tests/${{ inputs.test }}
+          cmake -B build
+          cmake --build build --parallel
+
+          cp ${{ github.workspace }}/cosmo.com .
+          ./cosmo.com build/libnative.so
