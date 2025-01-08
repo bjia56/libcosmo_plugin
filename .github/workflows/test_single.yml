@@ -113,7 +113,7 @@ jobs:
 
           cd ..
           cp ${{ github.workspace }}/cosmo.com .
-          ./cosmo.com libnative.so
+          ./cosmo.com build-native/libnative.so
 
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3
