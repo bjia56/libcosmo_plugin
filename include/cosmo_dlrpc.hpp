@@ -9,6 +9,11 @@
 #include "rfl/json.hpp"
 #include "rfl.hpp"
 
+#if defined(_MSC_VER)
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 struct Transport {
     ssize_t (*write)(const void* buffer, size_t size, void* context);
     ssize_t (*read)(void* buffer, size_t size, void* context);
