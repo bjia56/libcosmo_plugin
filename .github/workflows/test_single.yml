@@ -110,6 +110,12 @@ jobs:
         if: ${{ !contains(matrix.os, 'BSD') }}
         shell: bash
         run: |
+          if [[ "${{ matrix.os }}" == "Windows" ]]; then
+            # not sure why the symlink is broken on Windows
+            rm include/rfl
+            cp -r third_party/reflect-cpp/include/rfl include/rfl
+          fi
+
           cd tests/${{ inputs.test }}
           cmake -B build
           cmake --build build --parallel 4
