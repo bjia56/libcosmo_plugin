@@ -43,7 +43,7 @@ jobs:
         run: |
           cd tests/${{ inputs.test }}
           CC=cosmocc CXX=cosmoc++ cmake -B build -DBUILD_EXE=ON
-          cmake --build build --parallel
+          cmake --build build --parallel 4
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -112,7 +112,7 @@ jobs:
         run: |
           cd tests/${{ inputs.test }}
           cmake -B build
-          cmake --build build --parallel
+          cmake --build build --parallel 4
           
           cp ${{ github.workspace }}/cosmo.com .
           ./cosmo.com build/libnative.so
@@ -143,7 +143,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}/tests/${{ inputs.test }}
           cmake -B build
-          cmake --build build --parallel
+          cmake --build build --parallel 4
 
           cp ${{ github.workspace }}/cosmo.com .
           ./cosmo.com build/libnative.so
@@ -154,7 +154,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}/tests/${{ inputs.test }}
           cmake -B build
-          cmake --build build --parallel
+          cmake --build build --parallel 4
 
           cp ${{ github.workspace }}/cosmo.com .
           ./cosmo.com build/libnative.so
