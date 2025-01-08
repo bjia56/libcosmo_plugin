@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include "cosmo_rpc.hpp"
+#include "cosmo_dlrpc.hpp"
 
 struct MyData {
     int a;
