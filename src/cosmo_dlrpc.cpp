@@ -168,6 +168,7 @@ RPCPeer::~RPCPeer() {
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 
