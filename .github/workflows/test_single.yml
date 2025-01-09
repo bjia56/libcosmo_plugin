@@ -63,6 +63,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - runner: macos-13
+            arch: x86_64
+            os: MacOS
           - runner: macos-14
             arch: arm64
             os: MacOS
@@ -75,9 +78,12 @@ jobs:
           - runner: ubuntu-latest
             arch: x86_64
             os: FreeBSD
-          #- runner: ubuntu-latest
-          #  arch: x86_64
-          #  os: NetBSD
+          - runner: ubuntu-latest
+            arch: x86_64
+            os: NetBSD
+          - runner: ubuntu-latest
+            arch: x86_64
+            os: OpenBSD
 
     steps:
       - name: Set up cosmocc
@@ -111,12 +117,18 @@ jobs:
         shell: bash
         run: |
           cd tests/${{ inputs.test }}
-          cmake -B build
+          if [[ "${{ matrix.os}}" == "MacOS" && "${{ matrix.arch }}" == "x86_64" ]]; then
+            cmake -B build -DBUILD_EXE=ON -DBINARY_BAME=native
+          else
+            cmake -B build
+          fi
           cmake --build build --parallel 4
 
           cp ../../cosmo.com .
           if [[ "${{ matrix.os }}" == "Windows" ]]; then
             ./cosmo.com build/Debug/native.dll
+          elif [[ "${{ matrix.os }}" == "MacOS" && "${{ matrix.arch }}" == "x86_64" ]]; then
+            ./cosmo.com build/native
           else
             ./cosmo.com build/libnative.so
           fi
@@ -137,6 +149,13 @@ jobs:
           prepare: |
             /usr/sbin/pkg_add cmake clang
 
+      - name: Start VM
+        if: ${{ matrix.os == 'OpenBSD' }}
+        uses: vmactions/openbsd-vm@v1
+        with:
+          sync: nfs
+          release: 7.3
+
       - name: Build native and test
         if: ${{ matrix.os == 'FreeBSD' }}
         shell: freebsd {0}
@@ -153,11 +172,22 @@ jobs:
         shell: netbsd {0}
         run: |
           cd ${{ github.workspace }}/tests/${{ inputs.test }}
-          CC=clang CXX=clang++ cmake -B build
+          CC=clang CXX=clang++ cmake -B build -DBUILD_EXE=ON -DBINARY_NAME=native
           cmake --build build --parallel 4
 
           cp ../../cosmo.com .
-          ./cosmo.com build/libnative.so
+          ./cosmo.com build/native
+
+      - name: Build native and test
+        if: ${{ matrix.os == 'OpenBSD' }}
+        shell: openbsd {0}
+        run: |
+          cd ${{ github.workspace }}/tests/${{ inputs.test }}
+          CC=clang CXX=clang++ cmake -B build -DBUILD_EXE=ON -DBINARY_NAME=native
+          cmake --build build --parallel 4
+
+          cp ../../cosmo.com .
+          ./cosmo.com build/native
 
       - name: Interactive debugging
         uses: fawazahmed0/action-debug-vscode@v3

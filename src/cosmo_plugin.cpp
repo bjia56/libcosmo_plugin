@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -112,6 +113,7 @@ struct PluginHost::impl {
     void (*cosmo_rpc_initialization)(int, int);
     void (*cosmo_rpc_teardown)();
 
+    int childPID = 0;
 
     SocketManager* toPlugin = nullptr;
     SocketManager* toHost = nullptr;
@@ -129,6 +131,11 @@ struct PluginHost::impl {
         if (dynlibHandle) {
             cosmo_rpc_teardown();
             cosmo_dlclose(dynlibHandle);
+        }
+
+        if (childPID) {
+            kill(childPID, SIGKILL);
+            waitpid(childPID, nullptr, 0);
         }
 
         if (messageThread) {
@@ -154,31 +161,51 @@ PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod l
 PluginHost::~PluginHost() {}
 
 void PluginHost::initialize() {
-    pimpl->dynlibHandle = cosmo_dlopen(pluginPath.c_str(), RTLD_LOCAL | RTLD_NOW);
-    if (!pimpl->dynlibHandle) {
-        throw std::runtime_error("Failed to load shared object: " + std::string(cosmo_dlerror()));
-    }
-
-    // Get the address of the cosmo_rpc_initialization function
-    pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
-    if (!pimpl->cosmo_rpc_initialization) {
-        throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
-    }
-
-    // Get the address of the cosmo_rpc_teardown function
-    pimpl->cosmo_rpc_teardown = reinterpret_cast<void(*)()>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_teardown")));
-    if (!pimpl->cosmo_rpc_teardown) {
-        throw std::runtime_error("Failed to find symbol: cosmo_rpc_teardown: " + std::string(cosmo_dlerror()));
-    }
-
     // Create our socket managers
     pimpl->toPlugin = new SocketManager();
     pimpl->toPlugin->startServer();
     pimpl->toHost = new SocketManager();
     pimpl->toHost->startServer();
 
-    // Call the cosmo_rpc_initialization function
-    pimpl->cosmo_rpc_initialization(pimpl->toPlugin->getServerPort(), pimpl->toHost->getServerPort());
+    if (launchMethod == DLOPEN) {
+        // Load the shared object
+        pimpl->dynlibHandle = cosmo_dlopen(pluginPath.c_str(), RTLD_LOCAL | RTLD_NOW);
+        if (!pimpl->dynlibHandle) {
+            throw std::runtime_error("Failed to load shared object: " + std::string(cosmo_dlerror()));
+        }
+
+        // Get the address of the cosmo_rpc_initialization function
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        if (!pimpl->cosmo_rpc_initialization) {
+            throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
+        }
+
+        // Get the address of the cosmo_rpc_teardown function
+        pimpl->cosmo_rpc_teardown = reinterpret_cast<void(*)()>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_teardown")));
+        if (!pimpl->cosmo_rpc_teardown) {
+            throw std::runtime_error("Failed to find symbol: cosmo_rpc_teardown: " + std::string(cosmo_dlerror()));
+        }
+
+        // Call the cosmo_rpc_initialization function
+        pimpl->cosmo_rpc_initialization(pimpl->toPlugin->getServerPort(), pimpl->toHost->getServerPort());
+    } else if (launchMethod == FORK) {
+        // Fork a child process
+        pid_t pid = fork();
+        if (pid == -1) {
+            throw std::runtime_error("Failed to fork process: " + std::string(strerror(errno)));
+        }
+
+        if (pid == 0) {
+            int ret = execl(pluginPath.c_str(), pluginPath.c_str(), std::to_string(pimpl->toPlugin->getServerPort()).c_str(), std::to_string(pimpl->toHost->getServerPort()).c_str(), nullptr);
+            if (ret == -1) {
+                throw std::runtime_error("Failed to exec process: " + std::string(strerror(errno)));
+            }
+        } else {
+            pimpl->childPID = pid;
+        }
+    } else {
+        throw std::runtime_error("Unsupported launch method.");
+    }
 
     // Accept from the client
     pimpl->toPlugin->acceptConnection();
@@ -213,7 +240,7 @@ void PluginHost::initialize() {
 
 #else // __COSMOPOLITAN__
 
-#if !defined(COSMO_PLUGIN_DONT_GENERATE_MAIN) &&!defined(COSMO_PLUGIN_WANT_MAIN)
+#if !defined(COSMO_PLUGIN_DONT_GENERATE_MAIN) && !defined(COSMO_PLUGIN_WANT_MAIN)
 # if defined(__APPLE__) && defined(__x86_64__)
 #  define COSMO_PLUGIN_WANT_MAIN
 # elif defined(__OpenBSD__) || defined(__NetBSD__)
@@ -233,6 +260,7 @@ void PluginHost::initialize() {
 #include <cerrno>
 #endif
 
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -393,16 +421,19 @@ extern "C" EXPORT void cosmo_rpc_teardown() {
 
 #ifdef COSMO_PLUGIN_WANT_MAIN
 
-#include <cstdlib>
-
-int main(int argc, char*[] argv) {
-    if (argc 1= 3) {
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
         std::cerr << "Usage: " << argv[0] << " <port> <port>" << std::endl;
         return 1;
     }
 
     int port1 = atoi(argv[1]);
     int port2 = atoi(argv[2]);
+
+    if (port1 == 0 || port2 == 0) {
+        std::cerr << "Invalid port number." << std::endl;
+        return 1;
+    }
 
     cosmo_rpc_initialization(port1, port2);
 
