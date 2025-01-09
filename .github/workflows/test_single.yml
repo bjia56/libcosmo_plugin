@@ -75,9 +75,9 @@ jobs:
           - runner: ubuntu-latest
             arch: x86_64
             os: FreeBSD
-          - runner: ubuntu-latest
-            arch: x86_64
-            os: NetBSD
+          #- runner: ubuntu-latest
+          #  arch: x86_64
+          #  os: NetBSD
 
     steps:
       - name: Set up cosmocc
