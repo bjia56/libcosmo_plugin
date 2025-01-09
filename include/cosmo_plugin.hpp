@@ -115,7 +115,13 @@ private:
 
 class PluginHost : public RPCPeer {
 public:
-    PluginHost(const std::string& dynlibPath);
+    enum LaunchMethod {
+        AUTO = 0,
+        DLOPEN,
+        FORK
+    };
+
+    PluginHost(const std::string& pluginPath, LaunchMethod launchMethod = AUTO);
     ~PluginHost();
 
     void initialize();
@@ -124,7 +130,8 @@ private:
     virtual Transport &getOutboundTransport() override { return toPlugin; }
     virtual Transport &getInboundTransport() override { return toHost; }
 
-    std::string dynlibPath;
+    std::string pluginPath;
+    enum LaunchMethod launchMethod;
 
     struct impl;
     std::unique_ptr<impl> pimpl;

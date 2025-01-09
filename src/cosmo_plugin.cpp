@@ -12,6 +12,7 @@
 #include <thread>
 #include <unistd.h>
 
+#include <cosmo.h>
 #include <libc/dlopen/dlfcn.h>
 
 class SocketManager {
@@ -137,8 +138,17 @@ struct PluginHost::impl {
     }
 };
 
-PluginHost::PluginHost(const std::string& dynlibPath) : pimpl(new impl) {
-    this->dynlibPath = dynlibPath;
+PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod launchMethod) : pluginPath(pluginPath), pimpl(new impl) {
+    if (launchMethod == AUTO) {
+        if (IsXnu() && !IsXnuSilicon()) {
+            launchMethod = FORK;
+        } else if (IsOpenbsd() || IsNetbsd()) { // netbsd dlopen seems broken
+            launchMethod = FORK;
+        } else {
+            launchMethod = DLOPEN;
+        }
+    }
+    this->launchMethod = launchMethod;
 }
 
 PluginHost::~PluginHost() {}
