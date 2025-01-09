@@ -7,6 +7,7 @@
 #include <iostream>
 #include <netinet/in.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdexcept>
 #include <string>
 #include <sys/select.h>
@@ -79,6 +80,9 @@ public:
         timeval timeout{.tv_sec = 2, .tv_usec = 0};
         if (select(serverSocket + 1, &readfds, nullptr, nullptr, &timeout) < 0) {
             throw std::runtime_error("Failed to select socket: " + std::string(strerror(errno)));
+        }
+        if (!FD_ISSET(serverSocket, &readfds)) {
+            throw std::runtime_error("Timeout waiting for connection.");
         }
 
         // Accept a connection from a client
@@ -199,20 +203,17 @@ void PluginHost::initialize() {
         // Call the cosmo_rpc_initialization function
         pimpl->cosmo_rpc_initialization(pimpl->toPlugin->getServerPort(), pimpl->toHost->getServerPort());
     } else if (launchMethod == FORK) {
-        // Fork a child process
-        pid_t pid = fork();
-        if (pid == -1) {
-            throw std::runtime_error("Failed to fork process: " + std::string(strerror(errno)));
+        // posix_spawn a child process
+        int pid;
+        std::string port1 = std::to_string(pimpl->toPlugin->getServerPort());
+        std::string port2 = std::to_string(pimpl->toHost->getServerPort());
+
+        int res = posix_spawn(&pid, pluginPath.c_str(), nullptr, nullptr, (char* const[]){pluginPath.data(), port1.data(), port2.data(), nullptr}, nullptr);
+        if (res != 0) {
+            throw std::runtime_error("Failed to spawn process: " + std::string(strerror(res)));
         }
 
-        if (pid == 0) {
-            int ret = execl(pluginPath.c_str(), pluginPath.c_str(), std::to_string(pimpl->toPlugin->getServerPort()).c_str(), std::to_string(pimpl->toHost->getServerPort()).c_str(), nullptr);
-            if (ret == -1) {
-                throw std::runtime_error("Failed to exec process: " + std::string(strerror(errno)));
-            }
-        } else {
-            pimpl->childPID = pid;
-        }
+        pimpl->childPID = pid;
     } else {
         throw std::runtime_error("Unsupported launch method.");
     }
