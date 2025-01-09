@@ -2,12 +2,20 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
+#include <map>
+#include <cassert>
 
 #include "cosmo_plugin.hpp"
 
 struct MyData {
     int a;
     std::string b;
+};
+
+struct ComplexData {
+    std::vector<MyData> dataList;
+    std::map<std::string, int> dataMap;
 };
 
 using namespace std::literals::string_literals;
@@ -30,6 +38,16 @@ int main(int argc, char *argv[]) {
     }));
     plugin.registerHandler("create", std::function([](int a, std::string b) -> MyData {
         return MyData{a, b};
+    }));
+    plugin.registerHandler("processComplexData", std::function([](ComplexData cd) -> std::string {
+        int total = 0;
+        for (const auto &item : cd.dataList) {
+            total += item.a;
+        }
+        for (const auto &[key, value] : cd.dataMap) {
+            total += value;
+        }
+        return "Total: " + std::to_string(total);
     }));
 
     bool done = false;
@@ -54,6 +72,15 @@ int main(int argc, char *argv[]) {
     assert(data.a == 10);
     assert(data.b == "20");
 
+    std::cout << "Calling remote function 'processComplexData'..." << std::endl;
+    ComplexData complexData{
+        .dataList = {{1, "One"}, {2, "Two"}},
+        .dataMap = {{"key1", 10}, {"key2", 20}}
+    };
+    std::string summary = plugin.call<std::string>("processComplexData", complexData);
+    std::cout << "Result: " << summary << std::endl;
+    assert(summary == "Total: 33");
+
     plugin.call<int>("exit");
 
     while(!done) {
@@ -71,6 +98,16 @@ void plugin_initializer(Plugin *plugin) {
     }));
     plugin->registerHandler("create", std::function([](int a, std::string b) -> MyData {
         return MyData{a, b};
+    }));
+    plugin->registerHandler("processComplexData", std::function([](ComplexData cd) -> std::string {
+        int total = 0;
+        for (const auto &item : cd.dataList) {
+            total += item.a;
+        }
+        for (const auto &[key, value] : cd.dataMap) {
+            total += value;
+        }
+        return "Total: " + std::to_string(total);
     }));
 
     bool done = false;
@@ -95,6 +132,15 @@ void plugin_initializer(Plugin *plugin) {
         assert(data.a == 10);
         assert(data.b == "20");
 
+        std::cout << "Calling host function 'processComplexData'..." << std::endl;
+        ComplexData complexData{
+            .dataList = {{3, "Three"}, {4, "Four"}},
+            .dataMap = {{"key3", 30}, {"key4", 40}}
+        };
+        std::string summary = plugin->call<std::string>("processComplexData", complexData);
+        std::cout << "Result: " << summary << std::endl;
+        assert(summary == "Total: 77");
+
         plugin->call<int>("exit");
 
         while(!done) {
@@ -104,3 +150,4 @@ void plugin_initializer(Plugin *plugin) {
 }
 
 #endif
+
