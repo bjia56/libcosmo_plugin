@@ -1,4 +1,4 @@
-name: Run simple test
+name: Build and run all tests
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [simple]
+        test: [bidirectional]
     uses: ./.github/workflows/test_single.yml
     with:
       test: ${{ matrix.test }}

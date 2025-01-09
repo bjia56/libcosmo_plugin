@@ -20,7 +20,7 @@ on:
 
 jobs:
   build_exe:
-    name: Build exe ${{ inputs.test }}
+    name: ${{ inputs.test }} [cosmo]
     runs-on: ubuntu-latest
 
     steps:
@@ -56,7 +56,7 @@ jobs:
         if: ${{ always() && inputs.debug_cosmo }}
 
   build_test_native:
-    name: Build-test native ${{ inputs.test }} ${{ matrix.os }} ${{ matrix.arch }}
+    name: ${{ inputs.test }} [${{ matrix.os }} ${{ matrix.arch }}]
     needs: build_exe
     runs-on: ${{ matrix.runner }}
     strategy:
