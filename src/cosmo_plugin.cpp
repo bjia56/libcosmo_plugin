@@ -124,22 +124,16 @@ private:
 
 struct PluginHost::impl {
     void* dynlibHandle = nullptr;
-    void (*cosmo_rpc_initialization)(int, int);
+    void (*cosmo_rpc_initialization)(int);
     void (*cosmo_rpc_teardown)();
 
     int childPID = 0;
 
-    SocketManager* toPlugin = nullptr;
-    SocketManager* toHost = nullptr;
-
-    std::thread* messageThread = nullptr;
+    SocketManager* mgr = nullptr;
 
     ~impl() {
-        if (toPlugin) {
-            delete toPlugin;
-        }
-        if (toHost) {
-            delete toHost;
+        if (mgr) {
+            delete mgr;
         }
 
         if (dynlibHandle) {
@@ -150,11 +144,6 @@ struct PluginHost::impl {
         if (childPID) {
             kill(childPID, SIGKILL);
             waitpid(childPID, nullptr, 0);
-        }
-
-        if (messageThread) {
-            messageThread->join();
-            delete messageThread;
         }
     }
 };
@@ -175,11 +164,9 @@ PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod l
 PluginHost::~PluginHost() {}
 
 void PluginHost::initialize() {
-    // Create our socket managers
-    pimpl->toPlugin = new SocketManager();
-    pimpl->toPlugin->startServer();
-    pimpl->toHost = new SocketManager();
-    pimpl->toHost->startServer();
+    // Create our socket manager
+    pimpl->mgr = new SocketManager();
+    pimpl->mgr->startServer();
 
     if (launchMethod == DLOPEN) {
         // Load the shared object
@@ -189,7 +176,7 @@ void PluginHost::initialize() {
         }
 
         // Get the address of the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
         if (!pimpl->cosmo_rpc_initialization) {
             throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
         }
@@ -201,14 +188,13 @@ void PluginHost::initialize() {
         }
 
         // Call the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization(pimpl->toPlugin->getServerPort(), pimpl->toHost->getServerPort());
+        pimpl->cosmo_rpc_initialization(pimpl->mgr->getServerPort());
     } else if (launchMethod == FORK) {
         // posix_spawn a child process
         int pid;
-        std::string port1 = std::to_string(pimpl->toPlugin->getServerPort());
-        std::string port2 = std::to_string(pimpl->toHost->getServerPort());
+        std::string port = std::to_string(pimpl->mgr->getServerPort());
 
-        int res = posix_spawn(&pid, pluginPath.c_str(), nullptr, nullptr, (char* const[]){pluginPath.data(), port1.data(), port2.data(), nullptr}, nullptr);
+        int res = posix_spawn(&pid, pluginPath.c_str(), nullptr, nullptr, (char* const[]){pluginPath.data(), port.data(), nullptr}, nullptr);
         if (res != 0) {
             throw std::runtime_error("Failed to spawn process: " + std::string(strerror(res)));
         }
@@ -219,34 +205,32 @@ void PluginHost::initialize() {
     }
 
     // Accept from the client
-    pimpl->toPlugin->acceptConnection();
-    pimpl->toHost->acceptConnection();
+    pimpl->mgr->acceptConnection();
 
-    // Create the transports
-    for (auto &transport : {&toPlugin, &toHost}) {
-        transport->write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-            SocketManager* mgr = static_cast<SocketManager*>(context);
-            return send(mgr->getSocketFD(), buffer, size, 0);
-        };
-        transport->read = [](void* buffer, size_t size, void* context) -> ssize_t {
-            SocketManager* mgr = static_cast<SocketManager*>(context);
-            return recv(mgr->getSocketFD(), buffer, size, 0);
-        };
-        transport->close = [](void* context) {
-            SocketManager* mgr = static_cast<SocketManager*>(context);
-            mgr->closeSocket();
-        };
-        transport->context = transport == &toPlugin ? pimpl->toPlugin : pimpl->toHost;
-    }
+    // Create the transport
+    transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+        SocketManager* mgr = static_cast<SocketManager*>(context);
+        return send(mgr->getSocketFD(), buffer, size, 0);
+    };
+    transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+        SocketManager* mgr = static_cast<SocketManager*>(context);
+        return recv(mgr->getSocketFD(), buffer, size, 0);
+    };
+    transport.close = [](void* context) {
+        SocketManager* mgr = static_cast<SocketManager*>(context);
+        mgr->closeSocket();
+    };
+    transport.context = pimpl->mgr;
 
     // Start thread
-    pimpl->messageThread = new std::thread([this]() {
+   std::thread([this]() {
         try {
             processMessages();
+            std::cout << "Host thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
-    });
+    }).detach();
 }
 
 #else // __COSMOPOLITAN__
@@ -280,121 +264,110 @@ void PluginHost::initialize() {
 Plugin::Plugin() {}
 
 Plugin::~Plugin() {
-    for (auto &transport : {&toHost, &toPlugin}) {
-        if (transport->context) {
-            transport->close(transport->context);
-            delete static_cast<int*>(transport->context);
-        }
+    if (transport.context) {
+        transport.close(transport.context);
+        delete static_cast<int*>(transport.context);
     }
 }
 
 struct SharedObjectContext {
     Plugin *plugin;
-    std::thread *messageThread;
 };
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(int toPlugin, int toHost) {
+extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     Plugin* plugin = new Plugin();
 
-    for (auto port : {toPlugin, toHost}) {
 #ifdef _WIN32
-        // Initialize Winsock
-        WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-            std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
-            exit(EXIT_FAILURE);
-        }
+    // Initialize Winsock
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
+        exit(EXIT_FAILURE);
+    }
 #endif
 
-        // Step 1: Create a socket
-        int sockfd;
+    // Step 1: Create a socket
+    int sockfd;
 #ifdef _WIN32
-        SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock == INVALID_SOCKET) {
-            std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
-            WSACleanup();
-            exit(EXIT_FAILURE);
-        }
-        sockfd = static_cast<int>(sock); // Cast SOCKET to int for consistency
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
+        std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
+        WSACleanup();
+        exit(EXIT_FAILURE);
+    }
+    sockfd = static_cast<int>(sock); // Cast SOCKET to int for consistency
 #else
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd == -1) {
-            std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
-            exit(EXIT_FAILURE);
-        }
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) {
+        std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
+        exit(EXIT_FAILURE);
+    }
 #endif
 
-        // Step 2: Set up the server address structure for localhost
-        sockaddr_in serverAddress{};
-        serverAddress.sin_family = AF_INET;
-        serverAddress.sin_port = htons(port);
+    // Step 2: Set up the server address structure for localhost
+    sockaddr_in serverAddress{};
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(port);
 #ifdef _WIN32
-        if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) != 1) {
-            std::cerr << "Invalid address or address not supported." << std::endl;
-            closesocket(sock);
-            WSACleanup();
+    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) != 1) {
+        std::cerr << "Invalid address or address not supported." << std::endl;
+        closesocket(sock);
+        WSACleanup();
 #else
-        if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
-            std::cerr << "Invalid address or address not supported." << std::endl;
-            close(sockfd);
+    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
+        std::cerr << "Invalid address or address not supported." << std::endl;
+        close(sockfd);
 #endif
-            exit(EXIT_FAILURE);
-        }
-
-        // Step 3: Connect to the server
-        if (connect(sockfd, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) {
-#ifdef _WIN32
-            std::cerr << "Failed to connect to server: " << WSAGetLastError() << std::endl;
-            closesocket(sock);
-            WSACleanup();
-#else
-            std::cerr << "Failed to connect to server: " << strerror(errno) << std::endl;
-            close(sockfd);
-#endif
-            exit(EXIT_FAILURE);
-        }
-
-        // Step 4: Define the Transport struct using the connected socket
-        RPCPeer::Transport transport;
-        transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-            int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-            return send(sock, static_cast<const char*>(buffer), static_cast<int>(size), 0);
-#else
-            return send(sock, buffer, size, 0);
-#endif
-        };
-        transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-            int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-            return recv(sock, static_cast<char*>(buffer), static_cast<int>(size), 0);
-#else
-            return recv(sock, buffer, size, 0);
-#endif
-        };
-        transport.close = [](void* context) {
-            int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-            closesocket(sock);
-            WSACleanup();
-#else
-            close(sock);
-#endif
-        };
-        transport.context = new int;
-        *static_cast<int*>(transport.context) = sockfd;
-
-        // Step 5: Set the Transport in the Plugin
-        if (port == toPlugin) {
-            plugin->toPlugin = transport;
-        } else {
-            plugin->toHost = transport;
-        }
+        exit(EXIT_FAILURE);
     }
 
-    // Step 6: Pass the Plugin to the shared library initialization function
+    // Step 3: Connect to the server
+    if (connect(sockfd, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) {
+#ifdef _WIN32
+        std::cerr << "Failed to connect to server: " << WSAGetLastError() << std::endl;
+        closesocket(sock);
+        WSACleanup();
+#else
+        std::cerr << "Failed to connect to server: " << strerror(errno) << std::endl;
+        close(sockfd);
+#endif
+        exit(EXIT_FAILURE);
+    }
+
+    // Step 4: Populate Transport struct using the connected socket
+    RPCPeer::Transport transport;
+    transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+        int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        return send(sock, static_cast<const char*>(buffer), static_cast<int>(size), 0);
+#else
+        return send(sock, buffer, size, 0);
+#endif
+    };
+    transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+        int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        return recv(sock, static_cast<char*>(buffer), static_cast<int>(size), 0);
+#else
+        return recv(sock, buffer, size, 0);
+#endif
+    };
+    transport.close = [](void* context) {
+        int sock = *static_cast<int*>(context);
+#ifdef _WIN32
+        closesocket(sock);
+        WSACleanup();
+#else
+        close(sock);
+#endif
+    };
+    transport.context = new int;
+    *static_cast<int*>(transport.context) = sockfd;
+    plugin->transport = transport;
+
+    // Step 5: Pass the Plugin to the shared library initialization function
     try {
         plugin_initializer(plugin);
     } catch (const std::exception& ex) {
@@ -404,26 +377,23 @@ extern "C" EXPORT void cosmo_rpc_initialization(int toPlugin, int toHost) {
     }
 
     // Step 7: Process incoming messages in a thread
-    std::thread* messageThread = new std::thread([plugin]() {
+    std::thread([plugin]() {
         try {
             plugin->processMessages();
+            std::cout << "Client thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
-    });
+    }).detach();
 
     // Step 8: Store the shared object context
-    sharedObjectContext = new SharedObjectContext{plugin, messageThread};
+    sharedObjectContext = new SharedObjectContext{plugin};
 }
 
 extern "C" EXPORT void cosmo_rpc_teardown() {
     if (sharedObjectContext) {
         if (sharedObjectContext->plugin) {
             delete sharedObjectContext->plugin;
-        }
-        if (sharedObjectContext->messageThread) {
-            sharedObjectContext->messageThread->join();
-            delete sharedObjectContext->messageThread;
         }
         delete sharedObjectContext;
         sharedObjectContext = nullptr;
@@ -433,20 +403,19 @@ extern "C" EXPORT void cosmo_rpc_teardown() {
 #ifdef COSMO_PLUGIN_WANT_MAIN
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <port> <port>" << std::endl;
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " <port>" << std::endl;
         return 1;
     }
 
-    int port1 = atoi(argv[1]);
-    int port2 = atoi(argv[2]);
+    int port = atoi(argv[1]);
 
-    if (port1 == 0 || port2 == 0) {
+    if (port == 0) {
         std::cerr << "Invalid port number." << std::endl;
         return 1;
     }
 
-    cosmo_rpc_initialization(port1, port2);
+    cosmo_rpc_initialization(port);
 
     while(sharedObjectContext) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -459,14 +428,14 @@ int main(int argc, char* argv[]) {
 
 #endif // __COSMOPOLITAN__
 
-void RPCPeer::sendMessage(const std::string& message, RPCPeer::Transport &transport) {
+void RPCPeer::sendMessage(const std::string& message) {
     ssize_t bytesSent = transport.write(message.c_str(), message.size(), transport.context);
     if (bytesSent == -1 || static_cast<size_t>(bytesSent) != message.size()) {
         throw std::runtime_error("Failed to send message.");
     }
 }
 
-std::string RPCPeer::receiveMessage(RPCPeer::Transport &transport) {
+std::string RPCPeer::receiveMessage() {
     char buffer[1024];
     ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
 
@@ -486,7 +455,7 @@ std::string RPCPeer::receiveMessage(RPCPeer::Transport &transport) {
 
 void RPCPeer::processMessages() {
     while (true) {
-        std::string message = receiveMessage(getInboundTransport());
+        std::string message = receiveMessage();
         if (message.empty()) {
             // connection aborted, shut down
             break;
@@ -494,7 +463,12 @@ void RPCPeer::processMessages() {
 
         Message jsonMessage = deserialize(message);
         if (!jsonMessage.method.empty()) {
-            processRequest(jsonMessage);
+            std::thread([this, jsonMessage]() {
+                processRequest(jsonMessage);
+            }).detach();
+        } else if (jsonMessage.id) {
+            std::lock_guard<std::mutex> lock(responseQueueMutex);
+            responseQueue[jsonMessage.id] = jsonMessage;
         } else {
             throw std::runtime_error("Invalid RPC message format.");
         }
@@ -504,22 +478,41 @@ void RPCPeer::processMessages() {
 void RPCPeer::processRequest(const Message& request) {
     Message msg;
     try {
-        std::lock_guard<std::mutex> lock(handlersMutex);
-        if (handlers.find(request.method) == handlers.end()) {
-            throw std::runtime_error("Method not found: " + request.method);
+        std::function<rfl::Generic(const std::vector<rfl::Generic>&)> handler;
+        {
+            std::lock_guard<std::mutex> lock(handlersMutex);
+            if (handlers.find(request.method) == handlers.end()) {
+                throw std::runtime_error("Method not found: " + request.method);
+            }
+
+            handler = handlers[request.method];
         }
 
-        rfl::Generic response = handlers[request.method](request.params);
+        rfl::Generic response = handler(request.params);
         msg = constructResponse(request.id, response, "");
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
         msg = constructResponse(request.id, nullptr, ex.what());
     }
-    sendMessage(rfl::json::write(msg), getInboundTransport());
+    sendMessage(rfl::json::write(msg));
+}
+
+RPCPeer::Message RPCPeer::waitForResponse(unsigned long id) {
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(responseQueueMutex);
+            if (responseQueue.find(id) != responseQueue.end()) {
+                Message response = responseQueue[id];
+                responseQueue.erase(id);
+                return response;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
 // Construct an RPC request
-RPCPeer::Message RPCPeer::constructRequest(const std::string& id, const std::string& method, const std::vector<rfl::Generic>& params) {
+RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params) {
     return Message{
         .id = id,
         .method = method,
@@ -528,7 +521,7 @@ RPCPeer::Message RPCPeer::constructRequest(const std::string& id, const std::str
 }
 
 // Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(const std::string& id, const rfl::Generic& result, const std::string& error) {
+RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error) {
     return Message{
         .id = id,
         .result = result,

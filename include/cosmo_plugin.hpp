@@ -1,6 +1,7 @@
 #ifndef COSMO_RPC_HPP
 #define COSMO_RPC_HPP
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -31,7 +32,7 @@ typedef SSIZE_T ssize_t;
     #pragma warning Unknown dynamic link import/export semantics.
 #endif
 
-extern "C" EXPORT void cosmo_rpc_initialization(int toPlugin, int toHost);
+extern "C" EXPORT void cosmo_rpc_initialization(int port);
 
 #endif // __COSMOPOLITAN__
 
@@ -56,7 +57,7 @@ private:
             Response
         };
 
-        std::string id;
+        unsigned long id;
         std::string method;
         std::vector<rfl::Generic> params;
         rfl::Generic result;
@@ -64,10 +65,10 @@ private:
     };
 
     // Construct an RPC request
-    static Message constructRequest(const std::string& id, const std::string& method, const std::vector<rfl::Generic>& params);
+    static Message constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params);
 
     // Construct an RPC response
-    static Message constructResponse(const std::string& id, const rfl::Generic& result, const std::string& error);
+    static Message constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error);
 
     // Serialize an RPC message (request or response)
     static std::string serialize(const Message& message);
@@ -83,31 +84,31 @@ private:
         void* context; // User-provided context (e.g., socket, file descriptor)
     };
 
-    // toHost is a connection where Host is the server
-    Transport toHost;
-
-    // toPlugin is a connection where Plugin is the server
-    Transport toPlugin;
+    // Transport connecting to the peer
+    Transport transport;
 
     // Handlers for incoming requests
     std::unordered_map<std::string, std::function<rfl::Generic(const std::vector<rfl::Generic>&)>> handlers;
-
-    // Mutex for thread safety
     std::mutex handlersMutex;
 
-    // Helper messages to send and receive data. Uses the appropriate transport
-    // depending on what role the instance is playing (Host or Plugin).
-    void sendMessage(const std::string& message, Transport& transport);
-    std::string receiveMessage(Transport& transport);
+    // Queue response messages
+    std::unordered_map<unsigned long, Message> responseQueue;
+    std::mutex responseQueueMutex;
+
+    // Request counter
+    std::atomic<unsigned long> requestCounter;
+
+    // Helper messages to send and receive data
+    void sendMessage(const std::string& message);
+    std::string receiveMessage();
     void processRequest(const Message& request);
-    virtual Transport &getOutboundTransport() = 0;
-    virtual Transport &getInboundTransport() = 0;
+    Message waitForResponse(unsigned long id);
 
 #ifdef __COSMOPOLITAN__
     friend class PluginHost;
 #else
     friend class Plugin;
-    friend void cosmo_rpc_initialization(int toPlugin, int toHost);
+    friend void cosmo_rpc_initialization(int port);
 #endif // __COSMOPOLITAN__
 };
 
@@ -127,9 +128,6 @@ public:
     void initialize();
 
 private:
-    virtual Transport &getOutboundTransport() override { return toPlugin; }
-    virtual Transport &getInboundTransport() override { return toHost; }
-
     std::string pluginPath;
     enum LaunchMethod launchMethod;
 
@@ -146,10 +144,7 @@ public:
 private:
     Plugin();
 
-    virtual Transport &getOutboundTransport() override { return toHost; }
-    virtual Transport &getInboundTransport() override { return toPlugin; }
-
-    friend void cosmo_rpc_initialization(int toPlugin, int toHost);
+    friend void cosmo_rpc_initialization(int port);
 };
 
 #endif // __COSMOPOLITAN__
@@ -172,8 +167,7 @@ void RPCPeer::registerHandler(const std::string& method, std::function<ReturnTyp
 template <typename ReturnType, typename... Args>
 ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     // Generate a unique request ID
-    static int requestCounter = 0;
-    std::string requestID = std::to_string(++requestCounter);
+    unsigned long requestID = ++requestCounter;
 
     // Serialize the arguments into a JSON array
     std::vector<rfl::Generic> params;
@@ -190,17 +184,10 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     std::string request = serialize(msg);
 
     // Send the request to the peer
-    sendMessage(request, getOutboundTransport());
+    sendMessage(request);
 
     // Wait for the response
-    std::string response = receiveMessage(getOutboundTransport());
-    Message jsonResponse = deserialize(response);
-
-    // Validate the response ID
-    if (jsonResponse.id != requestID) {
-        throw std::runtime_error("Mismatched response ID: expected " + requestID +
-                                 ", got " + jsonResponse.id);
-    }
+    Message jsonResponse = waitForResponse(requestID);
 
     // Check for errors in the response
     if (!jsonResponse.error.empty()) {

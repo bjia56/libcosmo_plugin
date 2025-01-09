@@ -20,6 +20,61 @@ struct ComplexData {
 
 using namespace std::literals::string_literals;
 
+void registerTestHandlers(RPCPeer& peer, bool* done) {
+    peer.registerHandler("add", std::function([](int a, int b) -> int {
+        return a + b;
+    }));
+    peer.registerHandler("subtract", std::function([](int a, int b) -> int {
+        return a - b;
+    }));
+    peer.registerHandler("createData", std::function([](int a, std::string b) -> MyData {
+        return MyData{a, b};
+    }));
+    peer.registerHandler("processComplexData", std::function([](ComplexData cd) -> std::string {
+        int total = 0;
+        for (const auto &item : cd.dataList) {
+            total += item.a;
+        }
+        for (const auto &[key, value] : cd.dataMap) {
+            total += value;
+        }
+        return "Total: " + std::to_string(total);
+    }));
+    peer.registerHandler("peerArithmetic", std::function([&peer](int a, int b, int c) -> int {
+        int result = peer.call<int>("add", a, b);
+        result = peer.call<int>("subtract", result, c);
+        return result;
+    }));
+    peer.registerHandler("done", std::function([done]() -> int {
+        *done = true;
+        return 1;
+    }));
+}
+
+void testPeerHandlers(RPCPeer& peer) {
+    int result = peer.call<int>("add", 2, 3);
+    assert(result == 5);
+
+    result = peer.call<int>("subtract", 10, 5);
+    assert(result == 5);
+
+    MyData data = peer.call<MyData>("createData", 10, "20"s);
+    assert(data.a == 10);
+    assert(data.b == "20");
+
+    ComplexData complexData{
+        .dataList = {{1, "One"}, {2, "Two"}},
+        .dataMap = {{"key1", 10}, {"key2", 20}}
+    };
+    std::string summary = peer.call<std::string>("processComplexData", complexData);
+    assert(summary == "Total: 33");
+
+    result = peer.call<int>("peerArithmetic", 10, 20, 5);
+    assert(result == 25);
+
+    peer.call<int>("done");
+}
+
 #ifdef __COSMOPOLITAN__
 
 int main(int argc, char *argv[]) {
@@ -33,121 +88,42 @@ int main(int argc, char *argv[]) {
 
     std::cout << "Populating host functions..." << std::endl;
     PluginHost plugin(objectPath);
-    plugin.registerHandler("subtract", std::function([](int a, int b) -> int {
-        return a - b;
-    }));
-    plugin.registerHandler("create", std::function([](int a, std::string b) -> MyData {
-        return MyData{a, b};
-    }));
-    plugin.registerHandler("processComplexData", std::function([](ComplexData cd) -> std::string {
-        int total = 0;
-        for (const auto &item : cd.dataList) {
-            total += item.a;
-        }
-        for (const auto &[key, value] : cd.dataMap) {
-            total += value;
-        }
-        return "Total: " + std::to_string(total);
-    }));
-
     bool done = false;
-    plugin.registerHandler("exit", std::function([&done]() -> int {
-        done = true;
-        return 1;
-    }));
+    registerTestHandlers(plugin, &done);
 
     std::cout << "Initializing shared library..." << std::endl;
     plugin.initialize();
 
-    std::cout << "Calling remote function 'add'..." << std::endl;
-    int result = plugin.call<int>("add", 2, 3);
-
-    std::cout << "Result: " << result << std::endl;
-    assert(result == 5);
-
-    std::cout << "Calling remote function 'create'..." << std::endl;
-    MyData data = plugin.call<MyData>("create", 10, "20"s);
-
-    std::cout << "Result: {" << data.a << ", " << data.b << "}" << std::endl;
-    assert(data.a == 10);
-    assert(data.b == "20");
-
-    std::cout << "Calling remote function 'processComplexData'..." << std::endl;
-    ComplexData complexData{
-        .dataList = {{1, "One"}, {2, "Two"}},
-        .dataMap = {{"key1", 10}, {"key2", 20}}
-    };
-    std::string summary = plugin.call<std::string>("processComplexData", complexData);
-    std::cout << "Result: " << summary << std::endl;
-    assert(summary == "Total: 33");
-
-    plugin.call<int>("exit");
+    std::cout << "Testing plugin functions..." << std::endl;
+    testPeerHandlers(plugin);
 
     while(!done) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    std::cout << "Exiting..." << std::endl;
-
+    std::cout << "Host exiting..." << std::endl;
     return 0;
 }
 
 #else
 
 void plugin_initializer(Plugin *plugin) {
-    plugin->registerHandler("add", std::function([](int a, int b) -> int {
-        return a + b;
-    }));
-    plugin->registerHandler("create", std::function([](int a, std::string b) -> MyData {
-        return MyData{a, b};
-    }));
-    plugin->registerHandler("processComplexData", std::function([](ComplexData cd) -> std::string {
-        int total = 0;
-        for (const auto &item : cd.dataList) {
-            total += item.a;
-        }
-        for (const auto &[key, value] : cd.dataMap) {
-            total += value;
-        }
-        return "Total: " + std::to_string(total);
-    }));
-
-    bool done = false;
-    plugin->registerHandler("exit", std::function([&done]() -> int {
-        done = true;
-        return 1;
-    }));
+    bool *done = new bool;
+    *done = false;
+    registerTestHandlers(*plugin, done);
 
     std::cout << "Plugin initialized." << std::endl;
 
-    std::thread([plugin, &done]() {
-        std::cout << "Calling host function 'subtract'..." << std::endl;
-        int result = plugin->call<int>("subtract", 10, 5);
+    std::thread([plugin, done]() {
+        std::cout << "Testing host functions..." << std::endl;
+        testPeerHandlers(*plugin);
 
-        std::cout << "Result: " << result << std::endl;
-        assert(result == 5);
-
-        std::cout << "Calling host function 'create'..." << std::endl;
-        MyData data = plugin->call<MyData>("create", 10, "20"s);
-
-        std::cout << "Result: {" << data.a << ", " << data.b << "}" << std::endl;
-        assert(data.a == 10);
-        assert(data.b == "20");
-
-        std::cout << "Calling host function 'processComplexData'..." << std::endl;
-        ComplexData complexData{
-            .dataList = {{3, "Three"}, {4, "Four"}},
-            .dataMap = {{"key3", 30}, {"key4", 40}}
-        };
-        std::string summary = plugin->call<std::string>("processComplexData", complexData);
-        std::cout << "Result: " << summary << std::endl;
-        assert(summary == "Total: 77");
-
-        plugin->call<int>("exit");
-
-        while(!done) {
+        while(!*done) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
+
+        delete done;
+        std::cout << "Plugin exiting..." << std::endl;
     }).detach();
 }
 
