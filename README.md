@@ -56,7 +56,7 @@ void plugin_initializer(Plugin *plugin) {
 
 The easiest way to build `libcosmo_plugin` is with CMake. Add this repository as a submodule to your project, then include it as a subdirectory in your `CMakeLists.txt`. The variables `LIBCOSMO_PLUGIN_SOURCES` and `LIBCOSMO_PLUGIN_INCLUDE_DIRS` will be populated with the source files and include directories, respectively, which can be added to your application and shared library (plugin) builds.
 
-`libcosmo_plugin` relies on `cosmo_dlopen`, which is not available on all platforms supported by Cosmopolitan. Plugins can therefore be built either in "shared library" mode for `cosmo_dlopen` to load the plugin in the process's address space, or in "executable mode" for `posix_spawn` to launch the plugin as a subprocess. Sensible defaults are enabled by `libcosmo_plugin` to leverage `cosmo_dlopen` wherever reliably implemented, and `posix_spawn` elsewhere. The following table lists the defaults:
+`libcosmo_plugin` relies on `cosmo_dlopen`, which is not available on all platforms supported by Cosmopolitan. Plugins can therefore be built either in "shared library" mode for `cosmo_dlopen` to load the plugin in the process's address space, or in "executable" mode for `posix_spawn` to launch the plugin as a subprocess. Sensible defaults are enabled by `libcosmo_plugin` to leverage `cosmo_dlopen` wherever reliably implemented, and `posix_spawn` elsewhere. The following table lists the defaults:
 
 | Platform       | Launch method  |
 |-|-|
