@@ -8,7 +8,7 @@
 
 ## Motivation
 
-While Cosmopolitan Libc (and the Actually Portable Executable file format) allows creating portable binaries that can run on multiple OSes and architectures, sometimes it is necessary for a program to use platform-specific shared libraries or functions. Cosmopolitan's `cosmo_dlopen` function was introduced to allow calling platform-specific shared libraries, but is limited by only allowing one way communication and cannot expose host process symbols to the library. `libcosmo_plugin` aims to address this limitation by introducing a plugins architecture between host process and native plugin, allowing for bidirectional communication between both parties.
+While Cosmopolitan Libc (and the Actually Portable Executable file format) allows creating portable binaries that can run on multiple OSes and architectures, sometimes it is necessary for a program to use platform-specific shared libraries or functions. Cosmopolitan's `cosmo_dlopen` function was introduced to allow calling platform-specific shared libraries, but is limited by only allowing one way communication and cannot expose host process symbols to the library. `libcosmo_plugin` aims to address this limitation by introducing a plugin architecture between host process and native plugin, allowing for bidirectional communication between both parties.
 
 ## Usage
 
