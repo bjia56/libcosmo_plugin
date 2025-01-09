@@ -118,7 +118,7 @@ jobs:
         run: |
           cd tests/${{ inputs.test }}
           if [[ "${{ matrix.os}}" == "MacOS" && "${{ matrix.arch }}" == "x86_64" ]]; then
-            cmake -B build -DBUILD_EXE=ON -DBINARY_BAME=native
+            cmake -B build -DBUILD_EXE=ON -DBINARY_NAME=native
           else
             cmake -B build
           fi
