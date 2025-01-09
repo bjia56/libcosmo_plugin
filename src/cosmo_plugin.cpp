@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdexcept>
 #include <string>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -70,6 +71,15 @@ public:
     void acceptConnection() {
         sockaddr_in clientAddress;
         socklen_t clientAddrLen = sizeof(clientAddress);
+
+        // Select the socket with a timeout
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(serverSocket, &readfds);
+        timeval timeout{.tv_sec = 2, .tv_usec = 0};
+        if (select(serverSocket + 1, &readfds, nullptr, nullptr, &timeout) < 0) {
+            throw std::runtime_error("Failed to select socket: " + std::string(strerror(errno)));
+        }
 
         // Accept a connection from a client
         clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddress, &clientAddrLen);
