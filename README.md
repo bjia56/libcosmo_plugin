@@ -1,5 +1,6 @@
 # libcosmo_plugin
 
+![GitHub branch status](https://img.shields.io/github/checks-status/bjia56/libcosmo_plugin/main)
 ![GitHub License](https://img.shields.io/github/license/bjia56/libcosmo_plugin)
 [![Generic badge](https://img.shields.io/badge/C++-20-blue.svg)](https://shields.io/) 
 
