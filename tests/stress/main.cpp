@@ -19,7 +19,7 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
 }
 
 void testPeerHandlers(RPCPeer& peer) {
-    for (volatile int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 1000; i++) {
         int result = peer.call<int>("add", 2, 3);
         assert(result == 5);
     }

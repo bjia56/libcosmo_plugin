@@ -428,41 +428,64 @@ int main(int argc, char* argv[]) {
 
 #endif // __COSMOPOLITAN__
 
-void RPCPeer::sendMessage(const std::string& message) {
-    ssize_t bytesSent = transport.write(message.c_str(), message.size(), transport.context);
-    if (bytesSent == -1 || static_cast<size_t>(bytesSent) != message.size()) {
+void RPCPeer::sendMessage(const Message& message) {
+    std::lock_guard<std::mutex> lock(sendMutex);
+    std::string messageStr = rfl::json::write(message);
+    ssize_t bytesSent = transport.write(messageStr.c_str(), messageStr.size(), transport.context);
+    if (bytesSent == -1 || static_cast<size_t>(bytesSent) != messageStr.size()) {
         throw std::runtime_error("Failed to send message.");
     }
 }
 
-std::string RPCPeer::receiveMessage() {
+std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
+    static std::string unprocessedBuffer; // Buffer to store leftover data from previous reads
     char buffer[1024];
-    ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
+
+    while (true) {
+        // Check if we already have a complete JSON document in the unprocessed buffer
+        // First look for the end of the JSON document
+        int res = 0;
+        while ((res = unprocessedBuffer.find("}")) != std::string::npos) {
+            // Check if we already have a complete JSON document in this substring
+            std::string jsonEnd = unprocessedBuffer.substr(0, res + 1);
+            auto parsed = rfl::json::read<Message>(jsonEnd);
+            if (!parsed.error().has_value()) {
+                // Found a complete JSON document
+                unprocessedBuffer = unprocessedBuffer.substr(res + 1);
+                return parsed.value();
+            }
+        }
+
+        // No complete JSON in buffer; continue reading more data
+        // Read more data from the socket
+        ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
 
 #ifdef _WIN32
-    if (bytesReceived == SOCKET_ERROR) {
-        return "";
-    }
+        if (bytesReceived == SOCKET_ERROR) {
+            return {};
+        }
 #else
-    if (bytesReceived <= 0) {
-        return "";
-    }
+        if (bytesReceived <= 0) {
+            return {};
+        }
 #endif
 
-    buffer[bytesReceived] = '\0';
-    return std::string(buffer);
+        // Null-terminate and append to the buffer
+        buffer[bytesReceived] = '\0';
+        unprocessedBuffer += buffer;
+    }
 }
 
 void RPCPeer::processMessages() {
     while (true) {
-        std::string message = receiveMessage();
-        if (message.empty()) {
-            // connection aborted, shut down
+        std::optional<Message> maybeMessage = receiveMessage();
+        if (!maybeMessage.has_value()) {
             break;
         }
 
-        Message jsonMessage = deserialize(message);
-        if (!jsonMessage.method.empty()) {
+        Message jsonMessage = maybeMessage.value();
+
+        if (jsonMessage.method.has_value()) {
             std::thread([this, jsonMessage]() {
                 processRequest(jsonMessage);
             }).detach();
@@ -477,24 +500,25 @@ void RPCPeer::processMessages() {
 
 void RPCPeer::processRequest(const Message& request) {
     Message msg;
+    std::string method = request.method.value();
     try {
         std::function<rfl::Generic(const std::vector<rfl::Generic>&)> handler;
         {
             std::lock_guard<std::mutex> lock(handlersMutex);
-            if (handlers.find(request.method) == handlers.end()) {
-                throw std::runtime_error("Method not found: " + request.method);
+            if (handlers.find(method) == handlers.end()) {
+                throw std::runtime_error("Method not found: " + method);
             }
 
-            handler = handlers[request.method];
+            handler = handlers[method];
         }
 
-        rfl::Generic response = handler(request.params);
+        rfl::Generic response = handler(request.params.value());
         msg = constructResponse(request.id, response, "");
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
         msg = constructResponse(request.id, nullptr, ex.what());
     }
-    sendMessage(rfl::json::write(msg));
+    sendMessage(msg);
 }
 
 RPCPeer::Message RPCPeer::waitForResponse(unsigned long id) {
@@ -522,19 +546,12 @@ RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& 
 
 // Construct an RPC response
 RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error) {
-    return Message{
+    Message msg{
         .id = id,
         .result = result,
-        .error = error,
     };
-}
-
-// Serialize an RPC message (request or response)
-std::string RPCPeer::serialize(const Message& message) {
-    return rfl::json::write(message);
-}
-
-// Deserialize an RPC message (request or response)
-RPCPeer::Message RPCPeer::deserialize(const std::string& message) {
-    return rfl::json::read<Message>(message).value();
+    if (!error.empty()) {
+        msg.error = error;
+    }
+    return msg;
 }

@@ -58,10 +58,10 @@ private:
         };
 
         unsigned long id;
-        std::string method;
-        std::vector<rfl::Generic> params;
-        rfl::Generic result;
-        std::string error;
+        std::optional<std::string> method;
+        std::optional<std::vector<rfl::Generic>> params;
+        std::optional<rfl::Generic> result;
+        std::optional<std::string> error;
     };
 
     // Construct an RPC request
@@ -69,12 +69,6 @@ private:
 
     // Construct an RPC response
     static Message constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error);
-
-    // Serialize an RPC message (request or response)
-    static std::string serialize(const Message& message);
-
-    // Deserialize an RPC message (request or response)
-    static Message deserialize(const std::string& message);
 
     // Abstract Transport implementation
     struct Transport {
@@ -99,8 +93,9 @@ private:
     std::atomic<unsigned long> requestCounter;
 
     // Helper messages to send and receive data
-    void sendMessage(const std::string& message);
-    std::string receiveMessage();
+    void sendMessage(const Message& message);
+    std::mutex sendMutex;
+    std::optional<Message> receiveMessage();
     void processRequest(const Message& request);
     Message waitForResponse(unsigned long id);
 
@@ -179,23 +174,23 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
         params[j++] = rfl::to_generic(args);
     }(), ...);
 
-    // Serialize the RPC request
+    // Build the RPC request, then send it out
     Message msg = constructRequest(requestID, method, params);
-    std::string request = serialize(msg);
-
-    // Send the request to the peer
-    sendMessage(request);
+    sendMessage(msg);
 
     // Wait for the response
     Message jsonResponse = waitForResponse(requestID);
 
     // Check for errors in the response
-    if (!jsonResponse.error.empty()) {
-        throw std::runtime_error("RPC error: " + jsonResponse.error);
+    if (jsonResponse.error.has_value()) {
+        throw std::runtime_error("RPC error: " + jsonResponse.error.value());
+    }
+    if (!jsonResponse.result.has_value()) {
+        throw std::runtime_error("RPC response missing result");
     }
 
     // Deserialize the result into the expected return type
-    return rfl::from_generic<ReturnType>(jsonResponse.result).value();
+    return rfl::from_generic<ReturnType>(jsonResponse.result.value()).value();
 }
 
 #ifndef __COSMOPOLITAN__
