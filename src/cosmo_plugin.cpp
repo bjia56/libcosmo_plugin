@@ -445,7 +445,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
         // Check if we already have a complete JSON document in the unprocessed buffer
         // First look for the end of the JSON document
         int res = 0;
-        while ((res = unprocessedBuffer.find("}")) != std::string::npos) {
+        while ((res = unprocessedBuffer.find("}", res + 1)) != std::string::npos) {
             // Check if we already have a complete JSON document in this substring
             std::string jsonEnd = unprocessedBuffer.substr(0, res + 1);
             auto parsed = rfl::json::read<Message>(jsonEnd);
