@@ -12,6 +12,9 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
     peer.registerHandler("add", std::function([](int a, int b) -> int {
         return a + b;
     }));
+    peer.registerHandler("peerAdd", std::function([&peer](int a, int b) -> int {
+        return peer.call<int>("add", a, b);
+    }));
     peer.registerHandler("done", std::function([done]() -> int {
         *done = true;
         return 1;
@@ -21,6 +24,10 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
 void testPeerHandlers(RPCPeer& peer) {
     for (int i = 0; i < 1000; i++) {
         int result = peer.call<int>("add", 2, 3);
+        assert(result == 5);
+    }
+    for (int i = 0; i < 1000; i++) {
+        int result = peer.call<int>("peerAdd", 2, 3);
         assert(result == 5);
     }
     peer.call<int>("done");
