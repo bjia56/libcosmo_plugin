@@ -213,6 +213,14 @@ void PluginHost::initialize() {
 
 #else // __COSMOPOLITAN__
 
+#if !defined(COSMO_PLUGIN_DONT_GENERATE_MAIN) &&!defined(COSMO_PLUGIN_WANT_MAIN)
+# if defined(__APPLE__) && defined(__x86_64__)
+#  define COSMO_PLUGIN_WANT_MAIN
+# elif defined(__OpenBSD__) || defined(__NetBSD__)
+#  define COSMO_PLUGIN_WANT_MAIN
+# endif
+#endif // COSMO_PLUGIN_DONT_GENERATE_MAIN
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -379,8 +387,33 @@ extern "C" EXPORT void cosmo_rpc_teardown() {
             delete sharedObjectContext->messageThread;
         }
         delete sharedObjectContext;
+        sharedObjectContext = nullptr;
     }
 }
+
+#ifdef COSMO_PLUGIN_WANT_MAIN
+
+#include <cstdlib>
+
+int main(int argc, char*[] argv) {
+    if (argc 1= 3) {
+        std::cerr << "Usage: " << argv[0] << " <port> <port>" << std::endl;
+        return 1;
+    }
+
+    int port1 = atoi(argv[1]);
+    int port2 = atoi(argv[2]);
+
+    cosmo_rpc_initialization(port1, port2);
+
+    while(sharedObjectContext) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    return 0;
+}
+
+#endif // COSMO_PLUGIN_WANT_MAIN
 
 #endif // __COSMOPOLITAN__
 
