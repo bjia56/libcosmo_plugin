@@ -154,7 +154,7 @@ PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod l
 PluginHost::~PluginHost() {}
 
 void PluginHost::initialize() {
-    pimpl->dynlibHandle = cosmo_dlopen(dynlibPath.c_str(), RTLD_LOCAL | RTLD_NOW);
+    pimpl->dynlibHandle = cosmo_dlopen(pluginPath.c_str(), RTLD_LOCAL | RTLD_NOW);
     if (!pimpl->dynlibHandle) {
         throw std::runtime_error("Failed to load shared object: " + std::string(cosmo_dlerror()));
     }
