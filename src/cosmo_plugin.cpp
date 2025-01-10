@@ -511,6 +511,13 @@ int main(int argc, char* argv[]) {
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
     std::string messageStr = rfl::json::write(message);
+#ifdef COSMO_PLUGIN_DEBUG_RPC
+# ifdef __COSMOPOLITAN__
+    std::cerr << "Host sending: " << messageStr << std::endl;
+# else
+    std::cerr << "Plugin sending: " << messageStr << std::endl;
+# endif
+#endif
     ssize_t bytesSent = transport.write(messageStr.c_str(), messageStr.size(), transport.context);
     if (bytesSent == -1 || static_cast<size_t>(bytesSent) != messageStr.size()) {
         throw std::runtime_error("Failed to send message.");
@@ -531,6 +538,13 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
             auto parsed = rfl::json::read<Message>(jsonEnd);
             if (!parsed.error().has_value()) {
                 // Found a complete JSON document
+#ifdef COSMO_PLUGIN_DEBUG_RPC
+# ifdef __COSMOPOLITAN__
+                std::cerr << "Host received: " << jsonEnd << std::endl;
+# else
+                std::cerr << "Plugin received: " << jsonEnd << std::endl;
+# endif
+#endif
                 unprocessedBuffer = unprocessedBuffer.substr(res + 1);
                 return parsed.value();
             }
