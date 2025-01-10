@@ -255,7 +255,8 @@ void PluginHost::initialize() {
         cookieEnv << "COSMO_PLUGIN_COOKIE=" << pimpl->mgr->getCookie();
 
         const char* argv[] = {pluginPath.c_str(), port.c_str(), nullptr};
-        const char* newEnvVar = cookieEnv.str().c_str();
+        std::string cookieStr = cookieEnv.str();
+        const char* newEnvVar = cookieStr.c_str();
 
         pid = launchSubprocessWithEnv(pluginPath.c_str(), argv, newEnvVar);
         pimpl->childPID = pid;
