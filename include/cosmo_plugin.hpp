@@ -32,7 +32,7 @@ typedef SSIZE_T ssize_t;
     #pragma warning Unknown dynamic link import/export semantics.
 #endif
 
-extern "C" EXPORT void cosmo_rpc_initialization(int port, long cookie);
+extern "C" EXPORT void cosmo_rpc_initialization(int port, int cookie);
 
 #endif // __COSMOPOLITAN__
 
@@ -103,7 +103,7 @@ private:
     friend class PluginHost;
 #else
     friend class Plugin;
-    friend void cosmo_rpc_initialization(int port, long cookie);
+    friend void cosmo_rpc_initialization(int port, int cookie);
 #endif // __COSMOPOLITAN__
 };
 
@@ -139,7 +139,7 @@ public:
 private:
     Plugin();
 
-    friend void cosmo_rpc_initialization(int port, long cookie);
+    friend void cosmo_rpc_initialization(int port, int cookie);
 };
 
 #endif // __COSMOPOLITAN__

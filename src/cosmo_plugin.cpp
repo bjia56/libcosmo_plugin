@@ -96,7 +96,7 @@ public:
         }
 
         // Verify the client's auth cookie
-        long clientCookie;
+        int clientCookie;
         ssize_t bytesReceived = recv(clientSocket, &clientCookie, sizeof(clientCookie), 0);
         if (bytesReceived != sizeof(clientCookie) || clientCookie != cookie) {
             closeSocket();
@@ -127,7 +127,7 @@ public:
     }
 
     // Get the auth cookie
-    long getCookie() const {
+    int getCookie() const {
         return cookie;
     }
 
@@ -136,14 +136,14 @@ private:
     int clientSocket = -1;  // Connected client socket
     int serverPort = 0;     // Port the server is listening on
 
-    long cookie = 0;        // Auth cookie for client connecting to the server
+    int cookie = 0;        // Auth cookie for client connecting to the server
 
     sockaddr_in serverAddress{}; // Server address struct
 
     void generateCookie() {
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_int_distribution<long> dis(0, std::numeric_limits<long>::max());
+        std::uniform_int_distribution<int> dis(0, std::numeric_limits<int>::max());
         cookie = dis(gen);
     }
 };
@@ -335,7 +335,7 @@ struct SharedObjectContext {
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(int port, long cookie) {
+extern "C" EXPORT void cosmo_rpc_initialization(int port, int cookie) {
     Plugin* plugin = new Plugin();
 
 #ifdef _WIN32
@@ -485,10 +485,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    long cookie = 0;
+    int cookie = 0;
     const char* cookieStr = getenv("COSMO_PLUGIN_COOKIE");
     if (cookieStr) {
-        cookie = atol(cookieStr);
+        cookie = atoi(cookieStr);
     } else {
         std::cerr << "Missing auth cookie." << std::endl;
         return 1;
