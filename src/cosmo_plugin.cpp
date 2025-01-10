@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <random>
 #include <signal.h>
 #include <spawn.h>
 #include <stdexcept>
@@ -50,6 +51,9 @@ public:
 
     // Starts the server and listens for a connection
     void startServer() {
+        // Generate a random cookie
+        generateCookie();
+
         // Bind the server socket to the address and port
         if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
             throw std::runtime_error("Failed to bind socket: " + std::string(strerror(errno)));
@@ -90,6 +94,14 @@ public:
         if (clientSocket < 0) {
             throw std::runtime_error("Failed to accept connection: " + std::string(strerror(errno)));
         }
+
+        // Verify the client's auth cookie
+        long clientCookie;
+        ssize_t bytesReceived = recv(clientSocket, &clientCookie, sizeof(clientCookie), 0);
+        if (bytesReceived != sizeof(clientCookie) || clientCookie != cookie) {
+            closeSocket();
+            throw std::runtime_error("Invalid auth cookie.");
+        }
     }
 
     // Getters for the connected socket
@@ -114,17 +126,61 @@ public:
         return serverPort;
     }
 
+    // Get the auth cookie
+    long getCookie() const {
+        return cookie;
+    }
+
 private:
     int serverSocket = -1;  // Server socket
     int clientSocket = -1;  // Connected client socket
     int serverPort = 0;     // Port the server is listening on
 
+    long cookie = 0;        // Auth cookie for client connecting to the server
+
     sockaddr_in serverAddress{}; // Server address struct
+
+    void generateCookie() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<long> dis(0, std::numeric_limits<long>::max());
+        cookie = dis(gen);
+    }
 };
+
+static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], const char* newEnvVar) {
+    // Step 1: Count existing environment variables
+    size_t envCount = 0;
+    while (environ[envCount] != nullptr) {
+        envCount++;
+    }
+
+    // Step 2: Allocate memory for the new environment
+    std::vector<const char*> newEnv(envCount + 2); // +1 for the new variable, +1 for null terminator
+
+    // Step 3: Copy existing environment variables
+    for (size_t i = 0; i < envCount; i++) {
+        newEnv[i] = environ[i];
+    }
+
+    // Step 4: Add the new environment variable
+    newEnv[envCount] = newEnvVar;
+    newEnv[envCount + 1] = nullptr; // Null terminator
+
+    // Step 5: Spawn the subprocess with the new environment
+    pid_t pid;
+    int status = posix_spawn(&pid, program, nullptr, nullptr, const_cast<char* const*>(argv), const_cast<char* const*>(newEnv.data()));
+
+    if (status != 0) {
+        throw std::runtime_error("Failed to spawn process: " + std::string(strerror(status)));
+    }
+
+    return pid;
+}
 
 struct PluginHost::impl {
     void* dynlibHandle = nullptr;
-    void (*cosmo_rpc_initialization)(int);
+    void (*cosmo_rpc_initialization)(int, long);
     void (*cosmo_rpc_teardown)();
 
     int childPID = 0;
@@ -176,7 +232,7 @@ void PluginHost::initialize() {
         }
 
         // Get the address of the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, long)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
         if (!pimpl->cosmo_rpc_initialization) {
             throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
         }
@@ -188,17 +244,20 @@ void PluginHost::initialize() {
         }
 
         // Call the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization(pimpl->mgr->getServerPort());
+        pimpl->cosmo_rpc_initialization(pimpl->mgr->getServerPort(), pimpl->mgr->getCookie());
     } else if (launchMethod == FORK) {
         // posix_spawn a child process
         int pid;
         std::string port = std::to_string(pimpl->mgr->getServerPort());
 
-        int res = posix_spawn(&pid, pluginPath.c_str(), nullptr, nullptr, (char* const[]){pluginPath.data(), port.data(), nullptr}, nullptr);
-        if (res != 0) {
-            throw std::runtime_error("Failed to spawn process: " + std::string(strerror(res)));
-        }
+        // Add cookie to child's environment
+        std::stringstream cookieEnv;
+        cookieEnv << "COSMO_PLUGIN_COOKIE=" << pimpl->mgr->getCookie();
 
+        const char* argv[] = {pluginPath.c_str(), port.c_str(), nullptr};
+        const char* newEnvVar = cookieEnv.str().c_str();
+
+        pid = launchSubprocessWithEnv(pluginPath.c_str(), argv, newEnvVar);
         pimpl->childPID = pid;
     } else {
         throw std::runtime_error("Unsupported launch method.");
@@ -276,7 +335,7 @@ struct SharedObjectContext {
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(int port) {
+extern "C" EXPORT void cosmo_rpc_initialization(int port, long cookie) {
     Plugin* plugin = new Plugin();
 
 #ifdef _WIN32
@@ -284,6 +343,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
+        delete plugin;
         exit(EXIT_FAILURE);
     }
 #endif
@@ -295,6 +355,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     if (sock == INVALID_SOCKET) {
         std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
         WSACleanup();
+        delete plugin;
         exit(EXIT_FAILURE);
     }
     sockfd = static_cast<int>(sock); // Cast SOCKET to int for consistency
@@ -302,6 +363,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
+        delete plugin;
         exit(EXIT_FAILURE);
     }
 #endif
@@ -320,6 +382,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
         std::cerr << "Invalid address or address not supported." << std::endl;
         close(sockfd);
 #endif
+        delete plugin;
         exit(EXIT_FAILURE);
     }
 
@@ -333,6 +396,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
         std::cerr << "Failed to connect to server: " << strerror(errno) << std::endl;
         close(sockfd);
 #endif
+        delete plugin;
         exit(EXIT_FAILURE);
     }
 
@@ -367,7 +431,14 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port) {
     *static_cast<int*>(transport.context) = sockfd;
     plugin->transport = transport;
 
-    // Step 5: Pass the Plugin to the shared library initialization function
+    // Step 5: Send the auth cookie to the server
+    if (transport.write(&cookie, sizeof(cookie), transport.context) == -1) {
+        std::cerr << "Failed to send auth cookie." << std::endl;
+        delete plugin;
+        exit(EXIT_FAILURE);
+    }
+
+    // Step 6: Pass the Plugin to the shared library initialization function
     try {
         plugin_initializer(plugin);
     } catch (const std::exception& ex) {
@@ -409,13 +480,21 @@ int main(int argc, char* argv[]) {
     }
 
     int port = atoi(argv[1]);
-
     if (port == 0) {
         std::cerr << "Invalid port number." << std::endl;
         return 1;
     }
 
-    cosmo_rpc_initialization(port);
+    long cookie = 0;
+    const char* cookieStr = getenv("COSMO_PLUGIN_COOKIE");
+    if (cookieStr) {
+        cookie = atol(cookieStr);
+    } else {
+        std::cerr << "Missing auth cookie." << std::endl;
+        return 1;
+    }
+
+    cosmo_rpc_initialization(port, cookie);
 
     while(sharedObjectContext) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
