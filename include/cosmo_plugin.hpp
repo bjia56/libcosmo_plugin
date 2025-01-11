@@ -51,6 +51,16 @@ public:
     // Process incoming requests and responses
     void processMessages();
 
+#ifdef COSMO_PLUGIN_DEBUG_RPC
+    // Debug output stream
+    std::ostream* debugStream = &std::cerr;
+
+    // Configure debug output
+    void setDebugStream(std::ostream* stream) {
+        debugStream = stream;
+    }
+#endif
+
 private:
     // Serialize and deserialize RPC messages
     struct Message {

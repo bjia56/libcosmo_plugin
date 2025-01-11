@@ -513,9 +513,9 @@ void RPCPeer::sendMessage(const Message& message) {
     std::string messageStr = rfl::json::write(message);
 #ifdef COSMO_PLUGIN_DEBUG_RPC
 # ifdef __COSMOPOLITAN__
-    std::cerr << "Host sending: " << messageStr << std::endl;
+    *debugStream << "Host sending: " << messageStr << std::endl;
 # else
-    std::cerr << "Plugin sending: " << messageStr << std::endl;
+    *debugStream << "Plugin sending: " << messageStr << std::endl;
 # endif
 #endif
     ssize_t bytesSent = transport.write(messageStr.c_str(), messageStr.size(), transport.context);
@@ -540,9 +540,9 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
                 // Found a complete JSON document
 #ifdef COSMO_PLUGIN_DEBUG_RPC
 # ifdef __COSMOPOLITAN__
-                std::cerr << "Host received: " << jsonEnd << std::endl;
+                *debugStream << "Host received: " << jsonEnd << std::endl;
 # else
-                std::cerr << "Plugin received: " << jsonEnd << std::endl;
+                *debugStream << "Plugin received: " << jsonEnd << std::endl;
 # endif
 #endif
                 unprocessedBuffer = unprocessedBuffer.substr(res + 1);
