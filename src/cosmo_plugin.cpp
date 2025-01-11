@@ -585,7 +585,9 @@ void RPCPeer::processMessages() {
             }).detach();
         } else if (jsonMessage.id) {
             std::lock_guard<std::mutex> lock(responseQueueMutex);
-            responseQueue[jsonMessage.id] = jsonMessage;
+            if (responseQueue.find(jsonMessage.id) != responseQueue.end()) {
+                responseQueue[jsonMessage.id]->push(jsonMessage);
+            }
         } else {
             throw std::runtime_error("Invalid RPC message format.");
         }
@@ -613,20 +615,6 @@ void RPCPeer::processRequest(const Message& request) {
         msg = constructResponse(request.id, nullptr, ex.what());
     }
     sendMessage(msg);
-}
-
-RPCPeer::Message RPCPeer::waitForResponse(unsigned long id) {
-    while (true) {
-        {
-            std::lock_guard<std::mutex> lock(responseQueueMutex);
-            if (responseQueue.find(id) != responseQueue.end()) {
-                Message response = responseQueue[id];
-                responseQueue.erase(id);
-                return response;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
 }
 
 // Construct an RPC request

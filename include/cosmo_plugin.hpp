@@ -15,6 +15,8 @@
 typedef SSIZE_T ssize_t;
 #endif
 
+#include "LockingQueue.hpp"
+
 #ifndef __COSMOPOLITAN__
 
 #if defined(_MSC_VER)
@@ -86,7 +88,7 @@ private:
     std::mutex handlersMutex;
 
     // Queue response messages
-    std::unordered_map<unsigned long, Message> responseQueue;
+    std::unordered_map<unsigned long, LockingQueue<Message>*> responseQueue;
     std::mutex responseQueueMutex;
 
     // Request counter
@@ -97,7 +99,6 @@ private:
     std::mutex sendMutex;
     std::optional<Message> receiveMessage();
     void processRequest(const Message& request);
-    Message waitForResponse(unsigned long id);
 
 #ifdef __COSMOPOLITAN__
     friend class PluginHost;
@@ -174,12 +175,27 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
         params[j++] = rfl::to_generic(args);
     }(), ...);
 
-    // Build the RPC request, then send it out
+    // Build the RPC request
     Message msg = constructRequest(requestID, method, params);
+
+    // Prepare response handler
+    LockingQueue<Message> queue;
+    {
+        std::lock_guard<std::mutex> lock(responseQueueMutex);
+        responseQueue[requestID] = &queue;
+    }
+
     sendMessage(msg);
 
     // Wait for the response
-    Message jsonResponse = waitForResponse(requestID);
+    Message jsonResponse;
+    queue.waitAndPop(jsonResponse);
+
+    // Remove the response handler
+    {
+        std::lock_guard<std::mutex> lock(responseQueueMutex);
+        responseQueue.erase(requestID);
+    }
 
     // Check for errors in the response
     if (jsonResponse.error.has_value()) {
