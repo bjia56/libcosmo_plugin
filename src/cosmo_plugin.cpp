@@ -54,6 +54,8 @@ public:
     }
 
     void closePipes() {
+        closing = true;
+
         if (IsWindows()) {
             // nt
             if (hostPipeFDs[0] != -1) {
@@ -109,10 +111,17 @@ public:
         return hostPipeFDs[1];
     }
 
+    bool isClosing() const {
+        return closing;
+    }
+
 private:
     // use longs to match Windows handles
     long hostPipeFDs[2] = {-1, -1};
     long pluginPipeFDs[2] = {-1, -1};
+
+    // indicate to Windows when we want to interrupt reads
+    bool closing = false;
 };
 
 static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], const char* newEnvVar) {
@@ -243,6 +252,22 @@ void PluginHost::initialize() {
         };
         transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
             PipeManager* mgr = static_cast<PipeManager*>(context);
+
+            // loop peek until we get data
+            while (true) {
+                if (mgr->isClosing()) {
+                    return -1;
+                }
+                uint32_t bytesAvailable;
+                if (!PeekNamedPipe(mgr->getHostReadFD(), nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+                    return -1;
+                }
+                if (bytesAvailable > 0) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
             uint32_t bytesRead;
             return ReadFile(mgr->getHostReadFD(), buffer, size, &bytesRead, nullptr) ? bytesRead : -1;
         };
@@ -286,6 +311,7 @@ void PluginHost::initialize() {
 #ifdef _WIN32
 #include <windows.h>
 #include <fileapi.h>
+#include <namedpipeapi.h>
 #else
 #include <unistd.h>
 #include <cerrno>
@@ -297,16 +323,24 @@ void PluginHost::initialize() {
 #include <string>
 #include <thread>
 
+struct IOManager {
+#ifdef _WIN32
+    std::pair<HANDLE, HANDLE> fds;
+#else
+    std::pair<int, int> fds;
+#endif
+    bool isClosing = false;
+};
+
 Plugin::Plugin() {}
 
 Plugin::~Plugin() {
     if (transport.context) {
+        IOManager* mgr = static_cast<IOManager*>(transport.context);
+        mgr->isClosing = true;
         transport.close(transport.context);
-#ifdef _WIN32
-        delete static_cast<std::pair<HANDLE, HANDLE>*>(transport.context);
-#else
-        delete static_cast<std::pair<int, int>*>(transport.context);
-#endif
+        delete mgr;
+        transport.context = nullptr;
     }
 }
 
@@ -322,7 +356,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
     RPCPeer::Transport transport;
 #ifdef _WIN32
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-        HANDLE writeFD = static_cast<std::pair<HANDLE, HANDLE>*>(context)->second;
+        HANDLE writeFD = static_cast<IOManager*>(context)->fds.second;
         DWORD bytesWritten;
         if (!WriteFile(writeFD, buffer, size, &bytesWritten, nullptr)) {
             return -1;
@@ -330,7 +364,23 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
         return bytesWritten;
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        HANDLE readFD = static_cast<std::pair<HANDLE, HANDLE>*>(context)->first;
+        HANDLE readFD = static_cast<IOManager*>(context)->fds.first;
+
+        // loop peek until we get data
+        while (true) {
+            if (static_cast<IOManager*>(context)->isClosing) {
+                return -1;
+            }
+            DWORD bytesAvailable;
+            if (!PeekNamedPipe(readFD, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+                return -1;
+            }
+            if (bytesAvailable > 0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
         DWORD bytesRead;
         if (!ReadFile(readFD, buffer, size, &bytesRead, nullptr)) {
             return -1;
@@ -338,26 +388,26 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
         return bytesRead;
     };
     transport.close = [](void* context) {
-        auto fds = static_cast<std::pair<HANDLE, HANDLE>*>(context);
-        CloseHandle(fds->first);
-        CloseHandle(fds->second);
+        IOManager* mgr = static_cast<IOManager*>(context);
+        CloseHandle(mgr->fds.first);
+        CloseHandle(mgr->fds.second);
     };
-    transport.context = new std::pair<HANDLE, HANDLE>{(HANDLE)readFD, (HANDLE)writeFD};
+    transport.context = new IOManager{{(HANDLE)readFD, (HANDLE)writeFD}};
 #else
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-        int writeFD = static_cast<std::pair<int, int>*>(context)->second;
+        int writeFD = static_cast<IOManager*>(context)->fds.second;
         return write(writeFD, buffer, size);
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        int readFD = static_cast<std::pair<int, int>*>(context)->first;
+        int readFD = static_cast<IOManager*>(context)->fds.first;
         return read(readFD, buffer, size);
     };
     transport.close = [](void* context) {
-        auto fds = static_cast<std::pair<int, int>*>(context);
-        close(fds->first);
-        close(fds->second);
+        IOManager* mgr = static_cast<IOManager*>(context);
+        close(mgr->fds.first);
+        close(mgr->fds.second);
     };
-    transport.context = new std::pair<int, int>{(int)readFD, (int)writeFD};
+    transport.context = new IOManager{{(int)readFD, (int)writeFD}};
 #endif
     plugin->transport = transport;
 
