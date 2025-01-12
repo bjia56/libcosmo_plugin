@@ -19,136 +19,83 @@
 #include <cosmo.h>
 #include <libc/dlopen/dlfcn.h>
 
-class SocketManager {
+class PipeManager {
 public:
-    SocketManager() {
-        // Create the server socket
-        serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-        if (serverSocket == -1) {
-            throw std::runtime_error("Failed to create socket: " + std::string(strerror(errno)));
-        }
-
-        // Allow reuse of the address
-        int opt = 1;
-        if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-            throw std::runtime_error("Failed to set socket options: " + std::string(strerror(errno)));
-        }
-
-        // Initialize the server address structure
-        memset(&serverAddress, 0, sizeof(serverAddress));
-        serverAddress.sin_family = AF_INET;
-        serverAddress.sin_port = 0; // Let the OS choose a random port
-
-        // Bind to 127.0.0.1
-        if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
-            throw std::runtime_error("Failed to set server address to 127.0.0.1");
+    PipeManager() {
+        if (IsWindows()) {
+            // todo use CreatePipe
+            throw std::runtime_error("Windows is not supported.");
+        } else {
+            // unix
+            if (pipe(hostPipeFDs) == -1) {
+                throw std::runtime_error("Failed to create host pipe: " + std::string(strerror(errno)));
+            }
+            if (pipe(pluginPipeFDs) == -1) {
+                throw std::runtime_error("Failed to create plugin pipe: " + std::string(strerror(errno)));
+            }
         }
     }
 
-    ~SocketManager() {
-        closeSocket();
+    ~PipeManager() {
+        closePipes();
     }
 
-    // Starts the server and listens for a connection
-    void startServer() {
-        // Generate a random cookie
-        generateCookie();
-
-        // Bind the server socket to the address and port
-        if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
-            throw std::runtime_error("Failed to bind socket: " + std::string(strerror(errno)));
-        }
-
-        // Retrieve the assigned port
-        socklen_t addrLen = sizeof(serverAddress);
-        if (getsockname(serverSocket, (struct sockaddr*)&serverAddress, &addrLen) == -1) {
-            throw std::runtime_error("Failed to get socket name: " + std::string(strerror(errno)));
-        }
-        serverPort = ntohs(serverAddress.sin_port);
-
-        // Start listening for incoming connections
-        if (listen(serverSocket, 1) < 0) {
-            throw std::runtime_error("Failed to listen on socket: " + std::string(strerror(errno)));
-        }
-    }
-
-    // Accept a client connection
-    void acceptConnection() {
-        sockaddr_in clientAddress;
-        socklen_t clientAddrLen = sizeof(clientAddress);
-
-        // Select the socket with a timeout
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(serverSocket, &readfds);
-        timeval timeout{.tv_sec = 2, .tv_usec = 0};
-        if (select(serverSocket + 1, &readfds, nullptr, nullptr, &timeout) < 0) {
-            throw std::runtime_error("Failed to select socket: " + std::string(strerror(errno)));
-        }
-        if (!FD_ISSET(serverSocket, &readfds)) {
-            throw std::runtime_error("Timeout waiting for connection.");
-        }
-
-        // Accept a connection from a client
-        clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddress, &clientAddrLen);
-        if (clientSocket < 0) {
-            throw std::runtime_error("Failed to accept connection: " + std::string(strerror(errno)));
-        }
-
-        // Verify the client's auth cookie
-        int clientCookie;
-        ssize_t bytesReceived = recv(clientSocket, &clientCookie, sizeof(clientCookie), 0);
-        if (bytesReceived != sizeof(clientCookie) || clientCookie != cookie) {
-            closeSocket();
-            throw std::runtime_error("Invalid auth cookie.");
+    void closePipes() {
+        if (IsWindows()) {
+            // todo use CloseHandle
+            throw std::runtime_error("Windows is not supported.");
+        } else {
+            // unix
+            if (hostPipeFDs[0] != -1) {
+                close(hostPipeFDs[0]);
+                hostPipeFDs[0] = -1;
+            }
+            if (hostPipeFDs[1] != -1) {
+                close(hostPipeFDs[1]);
+                hostPipeFDs[1] = -1;
+            }
+            if (pluginPipeFDs[0] != -1) {
+                close(pluginPipeFDs[0]);
+                pluginPipeFDs[0] = -1;
+            }
+            if (pluginPipeFDs[1] != -1) {
+                close(pluginPipeFDs[1]);
+                pluginPipeFDs[1] = -1;
+            }
         }
     }
 
-    // Getters for the connected socket
-    int getSocketFD() const {
-        return clientSocket;
+    int getHostReadFD() const {
+        return hostPipeFDs[0];
     }
 
-    // Close the socket
-    void closeSocket() {
-        if (clientSocket != -1) {
-            close(clientSocket);
-            clientSocket = -1;
-        }
-        if (serverSocket != -1) {
-            close(serverSocket);
-            serverSocket = -1;
-        }
+    int getHostWriteFD() const {
+        return pluginPipeFDs[1];
     }
 
-    // Get the port the server is listening on
-    int getServerPort() const {
-        return serverPort;
+    int getPluginReadFD() const {
+        return pluginPipeFDs[0];
     }
 
-    // Get the auth cookie
-    int getCookie() const {
-        return cookie;
+    int getPluginWriteFD() const {
+        return hostPipeFDs[1];
     }
 
 private:
-    int serverSocket = -1;  // Server socket
-    int clientSocket = -1;  // Connected client socket
-    int serverPort = 0;     // Port the server is listening on
-
-    int cookie = 0;        // Auth cookie for client connecting to the server
-
-    sockaddr_in serverAddress{}; // Server address struct
-
-    void generateCookie() {
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<int> dis(0, std::numeric_limits<int>::max());
-        cookie = dis(gen);
-    }
+    int hostPipeFDs[2] = {-1, -1};
+    int pluginPipeFDs[2] = {-1, -1};
 };
 
 static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], const char* newEnvVar) {
+    if (!newEnvVar) {
+        pid_t pid;
+        int status = posix_spawn(&pid, program, nullptr, nullptr, const_cast<char* const*>(argv), nullptr);
+        if (status != 0) {
+            throw std::runtime_error("Failed to spawn process: " + std::string(strerror(status)));
+        }
+        return pid;
+    }
+
     // Step 1: Count existing environment variables
     size_t envCount = 0;
     while (environ[envCount] != nullptr) {
@@ -180,16 +127,16 @@ static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], co
 
 struct PluginHost::impl {
     void* dynlibHandle = nullptr;
-    void (*cosmo_rpc_initialization)(int, long);
+    void (*cosmo_rpc_initialization)(int, int);
     void (*cosmo_rpc_teardown)();
 
     int childPID = 0;
 
-    SocketManager* mgr = nullptr;
+    PipeManager* pipeMgr = nullptr;
 
     ~impl() {
-        if (mgr) {
-            delete mgr;
+        if (pipeMgr) {
+            delete pipeMgr;
         }
 
         if (dynlibHandle) {
@@ -220,9 +167,8 @@ PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod l
 PluginHost::~PluginHost() {}
 
 void PluginHost::initialize() {
-    // Create our socket manager
-    pimpl->mgr = new SocketManager();
-    pimpl->mgr->startServer();
+    // Create our pipe manager
+    pimpl->pipeMgr = new PipeManager();
 
     if (launchMethod == DLOPEN) {
         // Load the shared object
@@ -232,7 +178,7 @@ void PluginHost::initialize() {
         }
 
         // Get the address of the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, long)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
         if (!pimpl->cosmo_rpc_initialization) {
             throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
         }
@@ -244,43 +190,35 @@ void PluginHost::initialize() {
         }
 
         // Call the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization(pimpl->mgr->getServerPort(), pimpl->mgr->getCookie());
+        pimpl->cosmo_rpc_initialization(pimpl->pipeMgr->getPluginReadFD(), pimpl->pipeMgr->getPluginWriteFD());
     } else if (launchMethod == FORK) {
         // posix_spawn a child process
         int pid;
-        std::string port = std::to_string(pimpl->mgr->getServerPort());
+        std::string readFD = std::to_string(pimpl->pipeMgr->getPluginReadFD());
+        std::string writeFD = std::to_string(pimpl->pipeMgr->getPluginWriteFD());
 
-        // Add cookie to child's environment
-        std::stringstream cookieEnv;
-        cookieEnv << "COSMO_PLUGIN_COOKIE=" << pimpl->mgr->getCookie();
+        const char* argv[] = {pluginPath.c_str(), readFD.c_str(), writeFD.c_str(), nullptr};
 
-        const char* argv[] = {pluginPath.c_str(), port.c_str(), nullptr};
-        std::string cookieStr = cookieEnv.str();
-        const char* newEnvVar = cookieStr.c_str();
-
-        pid = launchSubprocessWithEnv(pluginPath.c_str(), argv, newEnvVar);
+        pid = launchSubprocessWithEnv(pluginPath.c_str(), argv, nullptr);
         pimpl->childPID = pid;
     } else {
         throw std::runtime_error("Unsupported launch method.");
     }
 
-    // Accept from the client
-    pimpl->mgr->acceptConnection();
-
     // Create the transport
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-        SocketManager* mgr = static_cast<SocketManager*>(context);
-        return send(mgr->getSocketFD(), buffer, size, 0);
+        PipeManager* mgr = static_cast<PipeManager*>(context);
+        return write(mgr->getHostWriteFD(), buffer, size);
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        SocketManager* mgr = static_cast<SocketManager*>(context);
-        return recv(mgr->getSocketFD(), buffer, size, 0);
+        PipeManager* mgr = static_cast<PipeManager*>(context);
+        return read(mgr->getHostReadFD(), buffer, size);
     };
     transport.close = [](void* context) {
-        SocketManager* mgr = static_cast<SocketManager*>(context);
-        mgr->closeSocket();
+        PipeManager* mgr = static_cast<PipeManager*>(context);
+        mgr->closePipes();
     };
-    transport.context = pimpl->mgr;
+    transport.context = pimpl->pipeMgr;
 
     // Start thread
    std::thread([this]() {
@@ -303,17 +241,8 @@ void PluginHost::initialize() {
 # endif
 #endif // COSMO_PLUGIN_DONT_GENERATE_MAIN
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "Ws2_32.lib") // Link against Winsock library
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 #include <cerrno>
-#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -326,7 +255,7 @@ Plugin::Plugin() {}
 Plugin::~Plugin() {
     if (transport.context) {
         transport.close(transport.context);
-        delete static_cast<int*>(transport.context);
+        delete static_cast<std::pair<int, int>*>(transport.context);
     }
 }
 
@@ -336,110 +265,34 @@ struct SharedObjectContext {
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(int port, int cookie) {
+extern "C" EXPORT void cosmo_rpc_initialization(int readFD, int writeFD) {
     Plugin* plugin = new Plugin();
 
 #ifdef _WIN32
-    // Initialize Winsock
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
+    // Not supported
+    std::cerr << "Windows is not supported." << std::endl;
+    delete plugin;
+    exit(EXIT_FAILURE);
 #endif
 
-    // Step 1: Create a socket
-    int sockfd;
-#ifdef _WIN32
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == INVALID_SOCKET) {
-        std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
-        WSACleanup();
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
-    sockfd = static_cast<int>(sock); // Cast SOCKET to int for consistency
-#else
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
-        std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
-#endif
-
-    // Step 2: Set up the server address structure for localhost
-    sockaddr_in serverAddress{};
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(port);
-#ifdef _WIN32
-    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) != 1) {
-        std::cerr << "Invalid address or address not supported." << std::endl;
-        closesocket(sock);
-        WSACleanup();
-#else
-    if (inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr) <= 0) {
-        std::cerr << "Invalid address or address not supported." << std::endl;
-        close(sockfd);
-#endif
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
-
-    // Step 3: Connect to the server
-    if (connect(sockfd, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) {
-#ifdef _WIN32
-        std::cerr << "Failed to connect to server: " << WSAGetLastError() << std::endl;
-        closesocket(sock);
-        WSACleanup();
-#else
-        std::cerr << "Failed to connect to server: " << strerror(errno) << std::endl;
-        close(sockfd);
-#endif
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
-
-    // Step 4: Populate Transport struct using the connected socket
     RPCPeer::Transport transport;
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-        int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-        return send(sock, static_cast<const char*>(buffer), static_cast<int>(size), 0);
-#else
-        return send(sock, buffer, size, 0);
-#endif
+        int writeFD = static_cast<std::pair<int, int>*>(context)->second;
+        return write(writeFD, buffer, size);
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-        return recv(sock, static_cast<char*>(buffer), static_cast<int>(size), 0);
-#else
-        return recv(sock, buffer, size, 0);
-#endif
+        int readFD = static_cast<std::pair<int, int>*>(context)->first;
+        return read(readFD, buffer, size);
     };
     transport.close = [](void* context) {
-        int sock = *static_cast<int*>(context);
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
+        auto fds = static_cast<std::pair<int, int>*>(context);
+        close(fds->first);
+        close(fds->second);
     };
-    transport.context = new int;
-    *static_cast<int*>(transport.context) = sockfd;
+    transport.context = new std::pair<int, int>{readFD, writeFD};
     plugin->transport = transport;
 
-    // Step 5: Send the auth cookie to the server
-    if (transport.write(&cookie, sizeof(cookie), transport.context) == -1) {
-        std::cerr << "Failed to send auth cookie." << std::endl;
-        delete plugin;
-        exit(EXIT_FAILURE);
-    }
-
-    // Step 6: Pass the Plugin to the shared library initialization function
+    // Pass the Plugin to the shared library initialization function
     try {
         plugin_initializer(plugin);
     } catch (const std::exception& ex) {
@@ -448,7 +301,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port, int cookie) {
         exit(EXIT_FAILURE);
     }
 
-    // Step 7: Process incoming messages in a thread
+    // Process incoming messages in a thread
     std::thread([plugin]() {
         try {
             plugin->processMessages();
@@ -458,7 +311,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(int port, int cookie) {
         }
     }).detach();
 
-    // Step 8: Store the shared object context
+    // Store the shared object context
     sharedObjectContext = new SharedObjectContext{plugin};
 }
 
@@ -475,27 +328,20 @@ extern "C" EXPORT void cosmo_rpc_teardown() {
 #ifdef COSMO_PLUGIN_WANT_MAIN
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <port>" << std::endl;
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <readFD> <writeFD>" << std::endl;
         return 1;
     }
 
-    int port = atoi(argv[1]);
-    if (port == 0) {
-        std::cerr << "Invalid port number." << std::endl;
+    int readFD = atoi(argv[1]);
+    int writeFD = atoi(argv[2]);
+
+    if (readFD <= 0 || writeFD <= 0) {
+        std::cerr << "Invalid file descriptor." << std::endl;
         return 1;
     }
 
-    int cookie = 0;
-    const char* cookieStr = getenv("COSMO_PLUGIN_COOKIE");
-    if (cookieStr) {
-        cookie = atoi(cookieStr);
-    } else {
-        std::cerr << "Missing auth cookie." << std::endl;
-        return 1;
-    }
-
-    cosmo_rpc_initialization(port, cookie);
+    cosmo_rpc_initialization(readFD, writeFD);
 
     while(sharedObjectContext) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
