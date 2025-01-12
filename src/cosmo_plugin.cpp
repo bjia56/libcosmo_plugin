@@ -345,7 +345,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
         CloseHandle(fds->first);
         CloseHandle(fds->second);
     };
-    transport.context = new std::pair<HANDLE, HANDLE>{readFD, writeFD};
+    transport.context = new std::pair<HANDLE, HANDLE>{(HANDLE)readFD, (HANDLE)writeFD};
 #else
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
         int writeFD = static_cast<std::pair<int, int>*>(context)->second;
