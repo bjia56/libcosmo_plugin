@@ -10,6 +10,7 @@
 #include <spawn.h>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unistd.h>
 
@@ -321,6 +322,7 @@ void PluginHost::initialize() {
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <thread>
 
 struct IOManager {
@@ -499,7 +501,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
         int res = 0;
         while ((res = unprocessedBuffer.find("}", res + 1)) != std::string::npos) {
             // Check if we already have a complete JSON document in this substring
-            std::string jsonEnd = unprocessedBuffer.substr(0, res + 1);
+            std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res + 1);
             auto parsed = rfl::json::read<Message>(jsonEnd);
             if (!parsed.error().has_value()) {
                 // Found a complete JSON document
