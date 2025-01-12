@@ -129,11 +129,11 @@ jobs:
 
           cp ../../cosmo.com .
           if [[ "${{ matrix.os }}" == "Windows" ]]; then
-            ./cosmo.com build/Debug/native.dll
+            time ./cosmo.com build/Debug/native.dll
           elif [[ "${{ matrix.os }}" == "MacOS" && "${{ matrix.arch }}" == "x86_64" ]]; then
-            ./cosmo.com build/native
+            time ./cosmo.com build/native
           else
-            ./cosmo.com build/libnative.so
+            time ./cosmo.com build/libnative.so
           fi
 
       - name: Start VM
