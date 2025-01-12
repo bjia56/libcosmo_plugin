@@ -475,6 +475,8 @@ int main(int argc, char* argv[]) {
 
 #endif // __COSMOPOLITAN__
 
+static const char RECORD_SEPARATOR = '\x1E';
+
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
     std::string messageStr = rfl::json::write(message);
@@ -489,19 +491,21 @@ void RPCPeer::sendMessage(const Message& message) {
     if (bytesSent == -1 || static_cast<size_t>(bytesSent) != messageStr.size()) {
         throw std::runtime_error("Failed to send message.");
     }
+    // Send record separator
+    transport.write(&RECORD_SEPARATOR, 1, transport.context);
 }
 
 std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
     static std::string unprocessedBuffer; // Buffer to store leftover data from previous reads
-    char buffer[1024];
+    char buffer[4096];
 
     while (true) {
         // Check if we already have a complete JSON document in the unprocessed buffer
         // First look for the end of the JSON document
         int res = 0;
-        while ((res = unprocessedBuffer.find("}", res + 1)) != std::string::npos) {
+        while ((res = unprocessedBuffer.find(RECORD_SEPARATOR, res + 1)) != std::string::npos) {
             // Check if we already have a complete JSON document in this substring
-            std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res + 1);
+            std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res);
             auto parsed = rfl::json::read<Message>(jsonEnd);
             if (!parsed.error().has_value()) {
                 // Found a complete JSON document
