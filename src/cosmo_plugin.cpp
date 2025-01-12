@@ -18,21 +18,37 @@
 
 #include <cosmo.h>
 #include <libc/dlopen/dlfcn.h>
+#include <libc/nt/ipc.h>
+#include <libc/nt/runtime.h>
 
 class PipeManager {
 public:
     PipeManager() {
         if (IsWindows()) {
-            // todo use CreatePipe
-            throw std::runtime_error("Windows is not supported.");
+            // nt
+            // ensure the pipes are created with inheritable handles
+            struct NtSecurityAttributes sa = {sizeof(struct NtSecurityAttributes), nullptr, true};
+            auto result = CreatePipe(&hostPipeFDs[0], &hostPipeFDs[1], &sa, 0);
+            if (!result) {
+                throw std::runtime_error("Failed to create host pipe: " + std::to_string(GetLastError()));
+            }
+            result = CreatePipe(&pluginPipeFDs[0], &pluginPipeFDs[1], &sa, 0);
+            if (!result) {
+                throw std::runtime_error("Failed to create plugin pipe: " + std::to_string(GetLastError()));
+            }
         } else {
             // unix
-            if (pipe(hostPipeFDs) == -1) {
+            int fds[2];
+            if (pipe(fds) == -1) {
                 throw std::runtime_error("Failed to create host pipe: " + std::string(strerror(errno)));
             }
-            if (pipe(pluginPipeFDs) == -1) {
+            hostPipeFDs[0] = fds[0];
+            hostPipeFDs[1] = fds[1];
+            if (pipe(fds) == -1) {
                 throw std::runtime_error("Failed to create plugin pipe: " + std::string(strerror(errno)));
             }
+            pluginPipeFDs[0] = fds[0];
+            pluginPipeFDs[1] = fds[1];
         }
     }
 
@@ -42,48 +58,64 @@ public:
 
     void closePipes() {
         if (IsWindows()) {
-            // todo use CloseHandle
-            throw std::runtime_error("Windows is not supported.");
-        } else {
-            // unix
+            // nt
             if (hostPipeFDs[0] != -1) {
-                close(hostPipeFDs[0]);
+                CloseHandle(hostPipeFDs[0]);
                 hostPipeFDs[0] = -1;
             }
             if (hostPipeFDs[1] != -1) {
-                close(hostPipeFDs[1]);
+                CloseHandle(hostPipeFDs[1]);
                 hostPipeFDs[1] = -1;
             }
             if (pluginPipeFDs[0] != -1) {
-                close(pluginPipeFDs[0]);
+                CloseHandle(pluginPipeFDs[0]);
                 pluginPipeFDs[0] = -1;
             }
             if (pluginPipeFDs[1] != -1) {
-                close(pluginPipeFDs[1]);
+                CloseHandle(pluginPipeFDs[1]);
+                pluginPipeFDs[1] = -1;
+            }
+        } else {
+            // unix
+            if (hostPipeFDs[0] != -1) {
+                close((int)hostPipeFDs[0]);
+                hostPipeFDs[0] = -1;
+            }
+            if (hostPipeFDs[1] != -1) {
+                close((int)hostPipeFDs[1]);
+                hostPipeFDs[1] = -1;
+            }
+            if (pluginPipeFDs[0] != -1) {
+                close((int)pluginPipeFDs[0]);
+                pluginPipeFDs[0] = -1;
+            }
+            if (pluginPipeFDs[1] != -1) {
+                close((int)pluginPipeFDs[1]);
                 pluginPipeFDs[1] = -1;
             }
         }
     }
 
-    int getHostReadFD() const {
+    long getHostReadFD() const {
         return hostPipeFDs[0];
     }
 
-    int getHostWriteFD() const {
+    long getHostWriteFD() const {
         return pluginPipeFDs[1];
     }
 
-    int getPluginReadFD() const {
+    long getPluginReadFD() const {
         return pluginPipeFDs[0];
     }
 
-    int getPluginWriteFD() const {
+    long getPluginWriteFD() const {
         return hostPipeFDs[1];
     }
 
 private:
-    int hostPipeFDs[2] = {-1, -1};
-    int pluginPipeFDs[2] = {-1, -1};
+    // use longs to match Windows handles
+    long hostPipeFDs[2] = {-1, -1};
+    long pluginPipeFDs[2] = {-1, -1};
 };
 
 static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], const char* newEnvVar) {
@@ -127,7 +159,7 @@ static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], co
 
 struct PluginHost::impl {
     void* dynlibHandle = nullptr;
-    void (*cosmo_rpc_initialization)(int, int);
+    void (*cosmo_rpc_initialization)(long, long);
     void (*cosmo_rpc_teardown)();
 
     int childPID = 0;
@@ -178,7 +210,7 @@ void PluginHost::initialize() {
         }
 
         // Get the address of the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(int, int)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(long, long)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
         if (!pimpl->cosmo_rpc_initialization) {
             throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
         }
@@ -206,14 +238,27 @@ void PluginHost::initialize() {
     }
 
     // Create the transport
-    transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-        PipeManager* mgr = static_cast<PipeManager*>(context);
-        return write(mgr->getHostWriteFD(), buffer, size);
-    };
-    transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        PipeManager* mgr = static_cast<PipeManager*>(context);
-        return read(mgr->getHostReadFD(), buffer, size);
-    };
+    if (IsWindows()) {
+        transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+            PipeManager* mgr = static_cast<PipeManager*>(context);
+            uint32_t bytesWritten;
+            return WriteFile(mgr->getHostWriteFD(), buffer, size, &bytesWritten, nullptr) ? bytesWritten : -1;
+        };
+        transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+            PipeManager* mgr = static_cast<PipeManager*>(context);
+            uint32_t bytesRead;
+            return ReadFile(mgr->getHostReadFD(), buffer, size, &bytesRead, nullptr) ? bytesRead : -1;
+        };
+    } else {
+        transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+            PipeManager* mgr = static_cast<PipeManager*>(context);
+            return write((int)mgr->getHostWriteFD(), buffer, size);
+        };
+        transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+            PipeManager* mgr = static_cast<PipeManager*>(context);
+            return read((int)mgr->getHostReadFD(), buffer, size);
+        };
+    }
     transport.close = [](void* context) {
         PipeManager* mgr = static_cast<PipeManager*>(context);
         mgr->closePipes();
@@ -241,8 +286,12 @@ void PluginHost::initialize() {
 # endif
 #endif // COSMO_PLUGIN_DONT_GENERATE_MAIN
 
+#ifdef _WIN32
+#include <fileapi.h>
+#else
 #include <unistd.h>
 #include <cerrno>
+#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -255,7 +304,11 @@ Plugin::Plugin() {}
 Plugin::~Plugin() {
     if (transport.context) {
         transport.close(transport.context);
+#ifdef _WIN32
+        delete static_cast<std::pair<HANDLE, HANDLE>*>(transport.context);
+#else
         delete static_cast<std::pair<int, int>*>(transport.context);
+#endif
     }
 }
 
@@ -265,17 +318,34 @@ struct SharedObjectContext {
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(int readFD, int writeFD) {
+extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
     Plugin* plugin = new Plugin();
 
-#ifdef _WIN32
-    // Not supported
-    std::cerr << "Windows is not supported." << std::endl;
-    delete plugin;
-    exit(EXIT_FAILURE);
-#endif
-
     RPCPeer::Transport transport;
+#ifdef _WIN32
+    transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+        HANDLE writeFD = static_cast<std::pair<HANDLE, HANDLE>*>(context)->second;
+        DWORD bytesWritten;
+        if (!WriteFile(writeFD, buffer, size, &bytesWritten, nullptr)) {
+            return -1;
+        }
+        return bytesWritten;
+    };
+    transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+        HANDLE readFD = static_cast<std::pair<HANDLE, HANDLE>*>(context)->first;
+        DWORD bytesRead;
+        if (!ReadFile(readFD, buffer, size, &bytesRead, nullptr)) {
+            return -1;
+        }
+        return bytesRead;
+    };
+    transport.close = [](void* context) {
+        auto fds = static_cast<std::pair<HANDLE, HANDLE>*>(context);
+        CloseHandle(fds->first);
+        CloseHandle(fds->second);
+    };
+    transport.context = new std::pair<HANDLE, HANDLE>{readFD, writeFD};
+#else
     transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
         int writeFD = static_cast<std::pair<int, int>*>(context)->second;
         return write(writeFD, buffer, size);
@@ -289,7 +359,8 @@ extern "C" EXPORT void cosmo_rpc_initialization(int readFD, int writeFD) {
         close(fds->first);
         close(fds->second);
     };
-    transport.context = new std::pair<int, int>{readFD, writeFD};
+    transport.context = new std::pair<int, int>{(int)readFD, (int)writeFD};
+#endif
     plugin->transport = transport;
 
     // Pass the Plugin to the shared library initialization function
