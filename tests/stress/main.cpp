@@ -22,16 +22,33 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
 }
 
 void testPeerHandlers(RPCPeer& peer) {
-    for (int i = 0; i < 1000; i++) {
-        int result = peer.call<int>("add", 2, 3);
-        assert(result == 5);
+    // Define the task for each thread
+    auto task = [&peer]() {
+        for (int i = 0; i < 1000; i++) {
+            int result = peer.call<int>("add", 2, 3);
+            assert(result == 5);
+        }
+        for (int i = 0; i < 1000; i++) {
+            int result = peer.call<int>("peerAdd", 2, 3);
+            assert(result == 5);
+        }
+    };
+
+    // Create 20 threads
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 20; t++) {
+        threads.emplace_back(task);
     }
-    for (int i = 0; i < 1000; i++) {
-        int result = peer.call<int>("peerAdd", 2, 3);
-        assert(result == 5);
+
+    // Join all threads
+    for (auto& thread : threads) {
+        thread.join();
     }
+
+    // Call "done" after all threads are complete
     peer.call<int>("done");
 }
+
 
 #ifdef __COSMOPOLITAN__
 
