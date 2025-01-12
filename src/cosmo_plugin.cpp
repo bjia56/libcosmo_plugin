@@ -287,6 +287,7 @@ void PluginHost::initialize() {
 #endif // COSMO_PLUGIN_DONT_GENERATE_MAIN
 
 #ifdef _WIN32
+#include <windows.h>
 #include <fileapi.h>
 #else
 #include <unistd.h>
