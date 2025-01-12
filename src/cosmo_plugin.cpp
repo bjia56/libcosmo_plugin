@@ -5,14 +5,11 @@
 #include <cerrno>
 #include <cstring>
 #include <iostream>
-#include <netinet/in.h>
 #include <random>
 #include <signal.h>
 #include <spawn.h>
 #include <stdexcept>
 #include <string>
-#include <sys/select.h>
-#include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 
@@ -405,8 +402,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int readFD = atoi(argv[1]);
-    int writeFD = atoi(argv[2]);
+    long readFD = atol(argv[1]);
+    long writeFD = atol(argv[2]);
 
     if (readFD <= 0 || writeFD <= 0) {
         std::cerr << "Invalid file descriptor." << std::endl;
@@ -469,18 +466,11 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
         }
 
         // No complete JSON in buffer; continue reading more data
-        // Read more data from the socket
+        // Read more data from the transport
         ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
-
-#ifdef _WIN32
-        if (bytesReceived == SOCKET_ERROR) {
-            return {};
-        }
-#else
         if (bytesReceived <= 0) {
             return {};
         }
-#endif
 
         // Null-terminate and append to the buffer
         buffer[bytesReceived] = '\0';
