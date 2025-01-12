@@ -32,11 +32,11 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
     peer.registerHandler("generate", std::function([](size_t size) -> std::vector<std::string> {
         return generateLargeVector(size);
     }));
-}
     peer.registerHandler("done", std::function([done]() -> int {
         *done = true;
         return 1;
     }));
+}
 
 void testPeerHandlers(RPCPeer& peer) {
 	for (int i = 0; i < 1000; i++) {
