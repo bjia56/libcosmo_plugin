@@ -105,9 +105,9 @@ private:
     std::atomic<unsigned long> requestCounter;
 
     // Helper messages to send and receive data
-    virtual void sendMessage(const Message& message);
+    void sendMessage(const Message& message);
     std::mutex sendMutex;
-    virtual std::optional<Message> receiveMessage();
+    std::optional<Message> receiveMessage();
     void processRequest(const Message& request);
 
 #ifdef __COSMOPOLITAN__
@@ -161,12 +161,9 @@ public:
     MockPeer();
     ~MockPeer();
 
-    void sendMessage(const Message& message) override;
-    std::optional<Message> receiveMessage() override;
-
 private:
-    LockingQueue<std::string> queue;
-    bool isClosing = false;
+    struct impl;
+    std::unique_ptr<impl> pimpl;
 };
 
 template <typename ReturnType, typename... Args>

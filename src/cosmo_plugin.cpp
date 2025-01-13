@@ -502,7 +502,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
     while (true) {
         // Check if we already have a complete JSON document in the unprocessed buffer
         // First look for the end of the JSON document
-        int res = 0;
+        int res = -1;
         while ((res = unprocessedBuffer.find(RECORD_SEPARATOR, res + 1)) != std::string::npos) {
             // Check if we already have a complete JSON document in this substring
             std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res);
@@ -516,7 +516,11 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
                 *debugStream << "Plugin received: " << jsonEnd << std::endl;
 # endif
 #endif
-                unprocessedBuffer = unprocessedBuffer.substr(res + 1);
+                if (res + 1 < unprocessedBuffer.size()) {
+                    unprocessedBuffer = unprocessedBuffer.substr(res + 1);
+                } else {
+                    unprocessedBuffer.clear();
+                }
                 return parsed.value();
             }
         }
@@ -602,36 +606,56 @@ RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic
     return msg;
 }
 
-MockPeer::MockPeer() {
-    std::thread([&] {
+#if defined(__COSMOPOLITAN__) || !defined(_WIN32)
+
+#include <sys/socket.h>
+#include <sys/un.h>
+
+struct MockPeer::impl {
+    int fds[2] = {-1, -1};
+
+    ~impl() {
+        if (fds[0] != -1) {
+            close(fds[0]);
+        }
+        if (fds[1] != -1) {
+            close(fds[1]);
+        }
+    };
+};
+
+MockPeer::MockPeer() : pimpl(new impl) {
+    // use socketpair to create a pair of connected sockets
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, pimpl->fds) == -1) {
+        throw std::runtime_error("Failed to create socket pair: " + std::string(strerror(errno)));
+    }
+
+    transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
+        int writeFD = static_cast<impl*>(context)->fds[1];
+        return write(writeFD, buffer, size);
+    };
+    transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
+        int readFD = static_cast<impl*>(context)->fds[0];
+        return read(readFD, buffer, size);
+    };
+    transport.close = [](void* context) {
+        impl* mgr = static_cast<impl*>(context);
+        close(mgr->fds[0]);
+        close(mgr->fds[1]);
+    };
+    transport.context = pimpl.get();
+
+    // Start thread
+    std::thread([this]() {
         try {
             processMessages();
+            std::cout << "MockPeer thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
     }).detach();
 }
 
-MockPeer::~MockPeer() {
-    isClosing = true;
-}
+MockPeer::~MockPeer() {}
 
-void MockPeer::sendMessage(const Message& message) {
-    queue.push(rfl::json::write(message));
-}
-
-std::optional<RPCPeer::Message> MockPeer::receiveMessage() {
-    while (true) {
-        if (isClosing) {
-            return {};
-        }
-
-        std::string message;
-        if (!queue.tryPop(message)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        return rfl::json::read<Message>(message).value();
-    }
-}
+#endif // __COSMOPOLITAN__ || !_WIN32
