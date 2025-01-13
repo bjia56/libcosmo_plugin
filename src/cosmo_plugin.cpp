@@ -601,3 +601,37 @@ RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic
     }
     return msg;
 }
+
+MockPeer::MockPeer() {
+    std::thread([&] {
+        try {
+            processMessages();
+        } catch (const std::exception& ex) {
+            std::cerr << "Error processing messages: " << ex.what() << std::endl;
+        }
+    }).detach();
+}
+
+MockPeer::~MockPeer() {
+    isClosing = true;
+}
+
+void MockPeer::sendMessage(const Message& message) {
+    queue.push(rfl::json::write(message));
+}
+
+std::optional<RPCPeer::Message> MockPeer::receiveMessage() {
+    while (true) {
+        if (isClosing) {
+            return {};
+        }
+
+        std::string message;
+        if (!queue.tryPop(message)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        return rfl::json::read<Message>(message).value();
+    }
+}

@@ -105,9 +105,9 @@ private:
     std::atomic<unsigned long> requestCounter;
 
     // Helper messages to send and receive data
-    void sendMessage(const Message& message);
+    virtual void sendMessage(const Message& message);
     std::mutex sendMutex;
-    std::optional<Message> receiveMessage();
+    virtual std::optional<Message> receiveMessage();
     void processRequest(const Message& request);
 
 #ifdef __COSMOPOLITAN__
@@ -116,6 +116,7 @@ private:
     friend class Plugin;
     friend void cosmo_rpc_initialization(long, long);
 #endif // __COSMOPOLITAN__
+    friend class MockPeer;
 };
 
 #ifdef __COSMOPOLITAN__
@@ -154,6 +155,19 @@ private:
 };
 
 #endif // __COSMOPOLITAN__
+
+class MockPeer : public RPCPeer {
+public:
+    MockPeer();
+    ~MockPeer();
+
+    void sendMessage(const Message& message) override;
+    std::optional<Message> receiveMessage() override;
+
+private:
+    LockingQueue<std::string> queue;
+    bool isClosing = false;
+};
 
 template <typename ReturnType, typename... Args>
 void RPCPeer::registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler) {
