@@ -177,12 +177,11 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
 
     // Serialize the arguments into a JSON array
     std::vector<rfl::Generic> params;
-    params.resize(sizeof...(Args));
+    params.reserve(sizeof...(Args));
 
     // https://stackoverflow.com/a/60136761
-    int j = 0;
     ([&] {
-        params[j++] = rfl::to_generic(args);
+        params.push_back(rfl::to_generic(args));
     }(), ...);
 
     // Build the RPC request
