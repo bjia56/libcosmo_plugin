@@ -516,11 +516,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
                 *debugStream << "Plugin received: " << jsonEnd << std::endl;
 # endif
 #endif
-                if (res + 1 < unprocessedBuffer.size()) {
-                    unprocessedBuffer = unprocessedBuffer.substr(res + 1);
-                } else {
-                    unprocessedBuffer.clear();
-                }
+                unprocessedBuffer = unprocessedBuffer.substr(res + 1);
                 return parsed.value();
             }
         }
