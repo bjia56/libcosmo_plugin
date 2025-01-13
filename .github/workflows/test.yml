@@ -12,7 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [bidirectional, stress, large]
+        test:
+          - bidirectional
+          - stress
+          - large
+          - signed-unsigned
     uses: ./.github/workflows/test_single.yml
     with:
       test: ${{ matrix.test }}
