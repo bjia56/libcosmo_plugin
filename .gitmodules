@@ -1,3 +1,3 @@
 [submodule "third_party/reflect-cpp"]
 	path = third_party/reflect-cpp
-	url = https://github.com/getml/reflect-cpp.git
+	url = https://github.com/bjia56/reflect-cpp.git
