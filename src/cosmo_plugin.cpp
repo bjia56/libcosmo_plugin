@@ -292,7 +292,7 @@ void PluginHost::initialize() {
    std::thread([this]() {
         try {
             processMessages();
-            std::cout << "Host thread ended." << std::endl;
+            //std::cout << "Host thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
@@ -426,7 +426,7 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
     std::thread([plugin]() {
         try {
             plugin->processMessages();
-            std::cout << "Client thread ended." << std::endl;
+            //std::cout << "Client thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
@@ -645,7 +645,7 @@ MockPeer::MockPeer() : pimpl(new impl) {
     std::thread([this]() {
         try {
             processMessages();
-            std::cout << "MockPeer thread ended." << std::endl;
+            //std::cout << "MockPeer thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
