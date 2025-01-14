@@ -10,14 +10,14 @@
 
 #include "cosmo_plugin.hpp"
 
-const long signedValue = 8331091968;
-const unsigned long unsignedValue = 8331091968;
+const int64_t signedValue = 8331091968;
+const uint64_t unsignedValue = 8331091968;
 
 void registerTestHandlers(RPCPeer& peer, bool* done) {
-    peer.registerHandler("signed", std::function([=](long value) -> long {
+    peer.registerHandler("signed", std::function([=](int64_t value) -> int64_t {
         return value;
     }));
-    peer.registerHandler("unsigned", std::function([=](unsigned long value) -> unsigned long {
+    peer.registerHandler("unsigned", std::function([=](uint64_t value) -> uint64_t {
         return value;
     }));
     peer.registerHandler("done", std::function([done]() -> int {
@@ -27,8 +27,8 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
 }
 
 void testPeerHandlers(RPCPeer& peer) {
-    assert(signedValue == peer.call<long>("signed", signedValue));
-    assert(unsignedValue == peer.call<unsigned long>("unsigned", unsignedValue));
+    assert(signedValue == peer.call<int64_t>("signed", signedValue));
+    assert(unsignedValue == peer.call<uint64_t>("unsigned", unsignedValue));
     peer.call<int>("done");
 }
 
