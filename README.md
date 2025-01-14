@@ -45,7 +45,7 @@ void plugin_initializer(Plugin *plugin) {
     // do long-running tasks and call host functions in a separate thread
     std::thread([plugin]() {
         // call functions exposed by the host
-        int result = plugin.call<int>("add", 2, 3);
+        int result = plugin->call<int>("add", 2, 3);
     }).detach();
 }
 ```
