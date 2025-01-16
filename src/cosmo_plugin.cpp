@@ -573,7 +573,7 @@ void RPCPeer::processRequest(const Message& request) {
         }
 
         rfl::Generic response = handler(request.params.value());
-        msg = constructResponse(request.id, response, "");
+        msg = constructResponse(request.id, response, std::nullopt);
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
         msg = constructResponse(request.id, nullptr, ex.what());
@@ -591,15 +591,12 @@ RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& 
 }
 
 // Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error) {
-    Message msg{
+RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::optional<std::string>& error) {
+    return Message{
         .id = id,
         .result = result,
+        .error = error,
     };
-    if (!error.empty()) {
-        msg.error = error;
-    }
-    return msg;
 }
 
 #if defined(__COSMOPOLITAN__) || !defined(_WIN32)

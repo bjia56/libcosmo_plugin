@@ -80,7 +80,7 @@ private:
     static Message constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params);
 
     // Construct an RPC response
-    static Message constructResponse(unsigned long id, const rfl::Generic& result, const std::string& error);
+    static Message constructResponse(unsigned long id, const rfl::Generic& result, const std::optional<std::string>& error);
 
     // Abstract Transport implementation
     struct Transport {
