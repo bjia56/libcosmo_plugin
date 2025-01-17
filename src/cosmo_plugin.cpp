@@ -315,6 +315,7 @@ void PluginHost::initialize() {
 #include <namedpipeapi.h>
 #else
 #include <unistd.h>
+#include <sys/select.h>
 #include <cerrno>
 #endif
 
@@ -332,6 +333,7 @@ struct IOManager {
     std::pair<int, int> fds;
 #endif
     bool isClosing = false;
+    std::thread* processingThread;
 };
 
 Plugin::Plugin() {}
@@ -340,8 +342,13 @@ Plugin::~Plugin() {
     if (transport.context) {
         IOManager* mgr = static_cast<IOManager*>(transport.context);
         mgr->isClosing = true;
+
         transport.close(transport.context);
+
+        mgr->processingThread->join();
+        delete mgr->processingThread;
         delete mgr;
+
         transport.context = nullptr;
     }
 }
@@ -366,28 +373,26 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
         return bytesWritten;
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        HANDLE readFD = static_cast<IOManager*>(context)->fds.first;
+        IOManager* ioManager = static_cast<IOManager*>(context);
+        HANDLE readFD = ioManager->fds.first;
 
         // loop peek until we get data
-        while (true) {
-            if (static_cast<IOManager*>(context)->isClosing) {
-                return -1;
-            }
+        while (!ioManager->isClosing) {
             DWORD bytesAvailable;
             if (!PeekNamedPipe(readFD, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
                 return -1;
             }
             if (bytesAvailable > 0) {
-                break;
+                DWORD bytesRead;
+                if (!ReadFile(readFD, buffer, size, &bytesRead, nullptr)) {
+                    return -1;
+                }
+                return bytesRead;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        DWORD bytesRead;
-        if (!ReadFile(readFD, buffer, size, &bytesRead, nullptr)) {
-            return -1;
-        }
-        return bytesRead;
+        return -1;
     };
     transport.close = [](void* context) {
         IOManager* mgr = static_cast<IOManager*>(context);
@@ -401,8 +406,34 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
         return write(writeFD, buffer, size);
     };
     transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-        int readFD = static_cast<IOManager*>(context)->fds.first;
-        return read(readFD, buffer, size);
+        IOManager* ioManager = static_cast<IOManager*>(context);
+        int readFD = ioManager->fds.first;
+
+        while (!ioManager->isClosing) {
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(readFD, &readfds);
+
+            // Set up the timeout for 100ms
+            struct timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 100000; // 100ms in microseconds
+
+            // Use select to wait for the file descriptor to become ready
+            int result = select(readFD + 1, &readfds, nullptr, nullptr, &timeout);
+            if (result > 0) {
+                if (FD_ISSET(readFD, &readfds)) {
+                    // File descriptor is ready for reading
+                    return read(readFD, buffer, size);
+                }
+            } else if (result == 0) {
+                // Timeout occurred
+                continue;
+            }
+        }
+
+        // An error occurred in select
+        return -1;
     };
     transport.close = [](void* context) {
         IOManager* mgr = static_cast<IOManager*>(context);
@@ -423,14 +454,14 @@ extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
     }
 
     // Process incoming messages in a thread
-    std::thread([plugin]() {
+    ((IOManager*)(transport.context))->processingThread = new std::thread([plugin]() {
         try {
             plugin->processMessages();
             //std::cout << "Client thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
         }
-    }).detach();
+    });
 
     // Store the shared object context
     sharedObjectContext = new SharedObjectContext{plugin};
