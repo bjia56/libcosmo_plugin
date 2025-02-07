@@ -538,7 +538,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
             // Check if we already have a complete JSON document in this substring
             std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res);
             auto parsed = rfl::json::read<Message>(jsonEnd);
-            if (!parsed.error().has_value()) {
+            if (parsed.has_value()) {
                 // Found a complete JSON document
 #ifdef COSMO_PLUGIN_DEBUG_RPC
 # ifdef __COSMOPOLITAN__
