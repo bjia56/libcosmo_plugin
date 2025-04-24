@@ -158,7 +158,6 @@ jobs:
         uses: vmactions/openbsd-vm@v1
         with:
           sync: nfs
-          release: 7.3
           prepare: |
             pkg_add cmake
 
