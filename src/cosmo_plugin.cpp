@@ -598,7 +598,7 @@ void RPCPeer::processMessages() {
 
 void RPCPeer::processRequest(const Message& request) {
     Message msg;
-    std::string method = request.method.value();
+    const std::string &method = request.method.value();
     try {
         std::function<std::string(const std::string&)> handler;
         {
@@ -610,7 +610,7 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        std::string response = handler(request.params.value());
+        const std::string response = handler(request.params.value());
         msg = constructResponse(request.id, response, std::nullopt);
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
