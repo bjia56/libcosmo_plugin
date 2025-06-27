@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <rfl/json.hpp>
+#include <rfl/msgpack.hpp>
 #include <rfl.hpp>
 
 #if defined(_MSC_VER)
@@ -51,16 +51,6 @@ public:
     // Process incoming requests and responses
     void processMessages();
 
-#ifdef COSMO_PLUGIN_DEBUG_RPC
-    // Debug output stream
-    std::ostream* debugStream = &std::cerr;
-
-    // Configure debug output
-    void setDebugStream(std::ostream* stream) {
-        debugStream = stream;
-    }
-#endif
-
 private:
     // Serialize and deserialize RPC messages
     struct Message {
@@ -71,16 +61,16 @@ private:
 
         unsigned long id;
         std::optional<std::string> method;
-        std::optional<std::string> params;
-        std::optional<std::string> result;
+        std::optional<std::vector<char>> params;
+        std::optional<std::vector<char>> result;
         std::optional<std::string> error;
     };
 
     // Construct an RPC request
-    static Message constructRequest(unsigned long id, const std::string& method, const std::string& params);
+    static Message constructRequest(unsigned long id, const std::string& method, const std::vector<char>& params);
 
     // Construct an RPC response
-    static Message constructResponse(unsigned long id, const std::string& result, const std::optional<std::string>& error);
+    static Message constructResponse(unsigned long id, const std::optional<std::vector<char>>& result, const std::optional<std::string>& error);
 
     // Abstract Transport implementation
     struct Transport {
@@ -94,7 +84,7 @@ private:
     Transport transport;
 
     // Handlers for incoming requests
-    std::unordered_map<std::string, std::function<std::string(const std::string&)>> handlers;
+    std::unordered_map<std::string, std::function<std::vector<char>(const std::vector<char>&)>> handlers;
     std::mutex handlersMutex;
 
     // Queue response messages
@@ -169,15 +159,15 @@ private:
 template <typename ReturnType, typename... Args>
 void RPCPeer::registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler) {
     std::lock_guard<std::mutex> lock(handlersMutex);
-    handlers[method] = [handler](const std::string& params) -> std::string {
-        // Deserialize the arguments from the JSON array
-        std::tuple<Args...> args = rfl::json::read<std::tuple<Args...>>(params).value();
+    handlers[method] = [handler](const std::vector<char>& params) -> std::vector<char> {
+        // Deserialize the arguments from the MessagePack format
+        std::tuple<Args...> args = rfl::msgpack::read<std::tuple<Args...>>(params).value();
 
         // Call the handler with the deserialized arguments
         ReturnType result = std::apply(handler, args);
 
-        // Serialize the result into a JSON object
-        return rfl::json::write(result);
+        // Serialize the result into a MessagePack format
+        return rfl::msgpack::write(result);
     };
 }
 
@@ -186,8 +176,8 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     // Generate a unique request ID
     unsigned long requestID = ++requestCounter;
 
-    // Serialize the arguments into a JSON array
-    std::string params = rfl::json::write(std::make_tuple(std::forward<Args>(args)...));
+    // Serialize the arguments into a MessagePack format
+    const std::vector<char> params = rfl::msgpack::write(std::make_tuple(std::forward<Args>(args)...));
 
     // Build the RPC request
     Message msg = constructRequest(requestID, method, params);
@@ -202,8 +192,8 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     sendMessage(msg);
 
     // Wait for the response
-    Message jsonResponse;
-    queue.waitAndPop(jsonResponse);
+    Message msgResponse;
+    queue.waitAndPop(msgResponse);
 
     // Remove the response handler
     {
@@ -212,15 +202,15 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Check for errors in the response
-    if (jsonResponse.error.has_value()) {
-        throw std::runtime_error("RPC error: " + jsonResponse.error.value());
+    if (msgResponse.error.has_value()) {
+        throw std::runtime_error("RPC error: " + msgResponse.error.value());
     }
-    if (!jsonResponse.result.has_value()) {
+    if (!msgResponse.result.has_value()) {
         throw std::runtime_error("RPC response missing result");
     }
 
     // Deserialize the result into the expected return type
-    return rfl::json::read<ReturnType>(jsonResponse.result.value()).value();
+    return rfl::msgpack::read<ReturnType>(msgResponse.result.value()).value();
 }
 
 #ifndef __COSMOPOLITAN__

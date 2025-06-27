@@ -513,82 +513,89 @@ int main(int argc, char* argv[]) {
 
 #endif // __COSMOPOLITAN__
 
-static const char RECORD_SEPARATOR = '\x1E';
-
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
-    std::string messageStr = rfl::json::write(message);
-#ifdef COSMO_PLUGIN_DEBUG_RPC
-# ifdef __COSMOPOLITAN__
-    *debugStream << "Host sending: " << messageStr << std::endl;
-# else
-    *debugStream << "Plugin sending: " << messageStr << std::endl;
-# endif
-#endif
-    ssize_t bytesSent = transport.write(messageStr.c_str(), messageStr.size(), transport.context);
+    const std::vector<char> messageStr = rfl::msgpack::write(message);
+
+    uint64_t messageSize = messageStr.size();
+    ssize_t bytesSent = transport.write(&messageSize, sizeof(messageSize), transport.context);
+    if (bytesSent == -1 || static_cast<size_t>(bytesSent) != sizeof(messageSize)) {
+        throw std::runtime_error("Failed to send message size.");
+    }
+
+    bytesSent = transport.write(messageStr.data(), messageStr.size(), transport.context);
     if (bytesSent == -1 || static_cast<size_t>(bytesSent) != messageStr.size()) {
         throw std::runtime_error("Failed to send message.");
     }
-    // Send record separator
-    transport.write(&RECORD_SEPARATOR, 1, transport.context);
 }
 
 std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
-    static std::string unprocessedBuffer; // Buffer to store leftover data from previous reads
-    char buffer[4096];
+    // Read the message size first
+    uint64_t messageSize;
+    size_t totalBytesReceived = 0;
 
-    while (true) {
-        // Check if we already have a complete JSON document in the unprocessed buffer
-        // First look for the end of the JSON document
-        int res = -1;
-        while ((res = unprocessedBuffer.find(RECORD_SEPARATOR, res + 1)) != std::string::npos) {
-            // Check if we already have a complete JSON document in this substring
-            std::string_view jsonEnd = std::string_view(unprocessedBuffer).substr(0, res);
-            auto parsed = rfl::json::read<Message>(jsonEnd);
-            if (parsed.has_value()) {
-                // Found a complete JSON document
-#ifdef COSMO_PLUGIN_DEBUG_RPC
-# ifdef __COSMOPOLITAN__
-                *debugStream << "Host received: " << jsonEnd << std::endl;
-# else
-                *debugStream << "Plugin received: " << jsonEnd << std::endl;
-# endif
-#endif
-                unprocessedBuffer = unprocessedBuffer.substr(res + 1);
-                return parsed.value();
-            }
-        }
+    // Read the message size (keep reading until we get the complete size)
+    while (totalBytesReceived < sizeof(messageSize)) {
+        ssize_t bytesReceived = transport.read(
+            reinterpret_cast<char*>(&messageSize) + totalBytesReceived,
+            sizeof(messageSize) - totalBytesReceived,
+            transport.context
+        );
 
-        // No complete JSON in buffer; continue reading more data
-        // Read more data from the transport
-        ssize_t bytesReceived = transport.read(buffer, sizeof(buffer) - 1, transport.context);
         if (bytesReceived <= 0) {
+            // Connection closed or error reading message size
             return {};
         }
 
-        // Null-terminate and append to the buffer
-        buffer[bytesReceived] = '\0';
-        unprocessedBuffer += buffer;
+        totalBytesReceived += bytesReceived;
     }
+
+    // Allocate a buffer of the exact message size
+    std::vector<char> messageBuffer(messageSize);
+    totalBytesReceived = 0;
+
+    // Read the message data (keep reading until we get the complete message)
+    while (totalBytesReceived < messageSize) {
+        ssize_t bytesReceived = transport.read(
+            messageBuffer.data() + totalBytesReceived,
+            messageSize - totalBytesReceived,
+            transport.context
+        );
+
+        if (bytesReceived <= 0) {
+            // Error reading message data
+            return {};
+        }
+
+        totalBytesReceived += bytesReceived;
+    }
+
+    // Parse the message
+    auto parsed = rfl::msgpack::read<Message>(messageBuffer);
+    if (!parsed.has_value()) {
+        throw std::runtime_error("Failed to parse RPC message");
+    }
+
+    return parsed.value();
 }
 
 void RPCPeer::processMessages() {
     while (true) {
-        std::optional<Message> maybeMessage = receiveMessage();
+        const std::optional<Message> maybeMessage = receiveMessage();
         if (!maybeMessage.has_value()) {
             break;
         }
 
-        Message jsonMessage = maybeMessage.value();
+        const Message msg = maybeMessage.value();
 
-        if (jsonMessage.method.has_value()) {
-            std::thread([this, jsonMessage]() {
-                processRequest(jsonMessage);
+        if (msg.method.has_value()) {
+            std::thread([this, msg]() {
+                processRequest(msg);
             }).detach();
-        } else if (jsonMessage.id) {
+        } else if (msg.id) {
             std::lock_guard<std::mutex> lock(responseQueueMutex);
-            if (responseQueue.find(jsonMessage.id) != responseQueue.end()) {
-                responseQueue[jsonMessage.id]->push(jsonMessage);
+            if (responseQueue.find(msg.id) != responseQueue.end()) {
+                responseQueue[msg.id]->push(msg);
             }
         } else {
             throw std::runtime_error("Invalid RPC message format.");
@@ -600,7 +607,7 @@ void RPCPeer::processRequest(const Message& request) {
     Message msg;
     const std::string &method = request.method.value();
     try {
-        std::function<std::string(const std::string&)> handler;
+        std::function<std::vector<char>(const std::vector<char>&)> handler;
         {
             std::lock_guard<std::mutex> lock(handlersMutex);
             if (handlers.find(method) == handlers.end()) {
@@ -610,17 +617,17 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        const std::string response = handler(request.params.value());
+        const std::vector<char> response = handler(request.params.value());
         msg = constructResponse(request.id, response, std::nullopt);
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
-        msg = constructResponse(request.id, nullptr, ex.what());
+        msg = constructResponse(request.id, std::nullopt, ex.what());
     }
     sendMessage(msg);
 }
 
 // Construct an RPC request
-RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::string& params) {
+RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::vector<char>& params) {
     return Message{
         .id = id,
         .method = method,
@@ -629,7 +636,7 @@ RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& 
 }
 
 // Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const std::string& result, const std::optional<std::string>& error) {
+RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const std::optional<std::vector<char>>& result, const std::optional<std::string>& error) {
     return Message{
         .id = id,
         .result = result,
