@@ -513,6 +513,10 @@ int main(int argc, char* argv[]) {
 
 #endif // __COSMOPOLITAN__
 
+#if defined(_MSC_VER)
+#include <winsock.h>
+#endif
+
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
     const std::vector<char> messageStr = rfl::msgpack::write(message);
