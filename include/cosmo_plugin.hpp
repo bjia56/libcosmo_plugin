@@ -71,16 +71,16 @@ private:
 
         unsigned long id;
         std::optional<std::string> method;
-        std::optional<std::vector<rfl::Generic>> params;
-        std::optional<rfl::Generic> result;
+        std::optional<std::string> params;
+        std::optional<std::string> result;
         std::optional<std::string> error;
     };
 
     // Construct an RPC request
-    static Message constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params);
+    static Message constructRequest(unsigned long id, const std::string& method, const std::string& params);
 
     // Construct an RPC response
-    static Message constructResponse(unsigned long id, const rfl::Generic& result, const std::optional<std::string>& error);
+    static Message constructResponse(unsigned long id, const std::string& result, const std::optional<std::string>& error);
 
     // Abstract Transport implementation
     struct Transport {
@@ -94,7 +94,7 @@ private:
     Transport transport;
 
     // Handlers for incoming requests
-    std::unordered_map<std::string, std::function<rfl::Generic(const std::vector<rfl::Generic>&)>> handlers;
+    std::unordered_map<std::string, std::function<std::string(const std::string&)>> handlers;
     std::mutex handlersMutex;
 
     // Queue response messages
@@ -169,15 +169,15 @@ private:
 template <typename ReturnType, typename... Args>
 void RPCPeer::registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler) {
     std::lock_guard<std::mutex> lock(handlersMutex);
-    handlers[method] = [handler](const std::vector<rfl::Generic>& params) -> rfl::Generic {
+    handlers[method] = [handler](const std::string& params) -> std::string {
         // Deserialize the arguments from the JSON array
-        std::tuple<Args...> args = rfl::from_generic<std::tuple<Args...>>(params).value();
+        std::tuple<Args...> args = rfl::json::read<std::tuple<Args...>>(params).value();
 
         // Call the handler with the deserialized arguments
         ReturnType result = std::apply(handler, args);
 
         // Serialize the result into a JSON object
-        return rfl::to_generic(result);
+        return rfl::json::write(result);
     };
 }
 
@@ -187,13 +187,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     unsigned long requestID = ++requestCounter;
 
     // Serialize the arguments into a JSON array
-    std::vector<rfl::Generic> params;
-    params.reserve(sizeof...(Args));
-
-    // https://stackoverflow.com/a/60136761
-    ([&] {
-        params.push_back(rfl::to_generic(args));
-    }(), ...);
+    std::string params = rfl::json::write(std::make_tuple(std::forward<Args>(args)...));
 
     // Build the RPC request
     Message msg = constructRequest(requestID, method, params);
@@ -226,7 +220,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Deserialize the result into the expected return type
-    return rfl::from_generic<ReturnType>(jsonResponse.result.value()).value();
+    return rfl::json::read<ReturnType>(jsonResponse.result.value()).value();
 }
 
 #ifndef __COSMOPOLITAN__

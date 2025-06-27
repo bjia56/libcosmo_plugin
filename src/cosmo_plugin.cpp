@@ -600,7 +600,7 @@ void RPCPeer::processRequest(const Message& request) {
     Message msg;
     std::string method = request.method.value();
     try {
-        std::function<rfl::Generic(const std::vector<rfl::Generic>&)> handler;
+        std::function<std::string(const std::string&)> handler;
         {
             std::lock_guard<std::mutex> lock(handlersMutex);
             if (handlers.find(method) == handlers.end()) {
@@ -610,7 +610,7 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        rfl::Generic response = handler(request.params.value());
+        std::string response = handler(request.params.value());
         msg = constructResponse(request.id, response, std::nullopt);
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
@@ -620,7 +620,7 @@ void RPCPeer::processRequest(const Message& request) {
 }
 
 // Construct an RPC request
-RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params) {
+RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::string& params) {
     return Message{
         .id = id,
         .method = method,
@@ -629,7 +629,7 @@ RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& 
 }
 
 // Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::optional<std::string>& error) {
+RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const std::string& result, const std::optional<std::string>& error) {
     return Message{
         .id = id,
         .result = result,
