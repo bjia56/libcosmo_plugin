@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <signal.h>
 #include <spawn.h>
@@ -171,11 +172,11 @@ struct PluginHost::impl {
 
     int childPID = 0;
 
-    PipeManager* pipeMgr = nullptr;
+    std::shared_ptr<PipeManager> pipeMgr = nullptr;
 
     ~impl() {
         if (pipeMgr) {
-            delete pipeMgr;
+            pipeMgr->closePipes();
         }
 
         if (dynlibHandle) {
@@ -207,7 +208,9 @@ PluginHost::~PluginHost() {}
 
 void PluginHost::initialize() {
     // Create our pipe manager
-    pimpl->pipeMgr = new PipeManager();
+    // Use a pointer to a shared_ptr to ensure it is not deleted until the thread is done
+    std::shared_ptr<PipeManager> *pipeMgr = new std::shared_ptr<PipeManager>(new PipeManager());
+    pimpl->pipeMgr = *pipeMgr;
 
     if (launchMethod == DLOPEN) {
         // Load the shared object
@@ -247,12 +250,12 @@ void PluginHost::initialize() {
     // Create the transport
     if (IsWindows()) {
         transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-            PipeManager* mgr = static_cast<PipeManager*>(context);
+            auto mgr = *static_cast<std::shared_ptr<PipeManager>*>(context);
             uint32_t bytesWritten;
             return WriteFile(mgr->getHostWriteFD(), buffer, size, &bytesWritten, nullptr) ? bytesWritten : -1;
         };
         transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-            PipeManager* mgr = static_cast<PipeManager*>(context);
+            auto mgr = *static_cast<std::shared_ptr<PipeManager>*>(context);
 
             // loop peek until we get data
             while (true) {
@@ -274,27 +277,31 @@ void PluginHost::initialize() {
         };
     } else {
         transport.write = [](const void* buffer, size_t size, void* context) -> ssize_t {
-            PipeManager* mgr = static_cast<PipeManager*>(context);
+            auto mgr = *static_cast<std::shared_ptr<PipeManager>*>(context);
             return write((int)mgr->getHostWriteFD(), buffer, size);
         };
         transport.read = [](void* buffer, size_t size, void* context) -> ssize_t {
-            PipeManager* mgr = static_cast<PipeManager*>(context);
+            auto mgr = *static_cast<std::shared_ptr<PipeManager>*>(context);
             return read((int)mgr->getHostReadFD(), buffer, size);
         };
     }
     transport.close = [](void* context) {
-        PipeManager* mgr = static_cast<PipeManager*>(context);
+        auto mgr = *static_cast<std::shared_ptr<PipeManager>*>(context);
         mgr->closePipes();
     };
-    transport.context = pimpl->pipeMgr;
+    transport.context = pipeMgr;
 
     // Start thread
-   std::thread([this]() {
+   std::thread([this, pipeMgr]() {
         try {
             processMessages();
             //std::cout << "Host thread ended." << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Error processing messages: " << ex.what() << std::endl;
+        }
+        // Clean up the pipe manager
+        if (pipeMgr) {
+            delete pipeMgr;
         }
     }).detach();
 }
@@ -591,9 +598,9 @@ void RPCPeer::processMessages() {
 
 void RPCPeer::processRequest(const Message& request) {
     Message msg;
-    std::string method = request.method.value();
+    const std::string &method = request.method.value();
     try {
-        std::function<rfl::Generic(const std::vector<rfl::Generic>&)> handler;
+        std::function<std::string(const std::string&)> handler;
         {
             std::lock_guard<std::mutex> lock(handlersMutex);
             if (handlers.find(method) == handlers.end()) {
@@ -603,7 +610,7 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        rfl::Generic response = handler(request.params.value());
+        const std::string response = handler(request.params.value());
         msg = constructResponse(request.id, response, std::nullopt);
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
@@ -613,7 +620,7 @@ void RPCPeer::processRequest(const Message& request) {
 }
 
 // Construct an RPC request
-RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::vector<rfl::Generic>& params) {
+RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::string& params) {
     return Message{
         .id = id,
         .method = method,
@@ -622,7 +629,7 @@ RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& 
 }
 
 // Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const rfl::Generic& result, const std::optional<std::string>& error) {
+RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const std::string& result, const std::optional<std::string>& error) {
     return Message{
         .id = id,
         .result = result,
