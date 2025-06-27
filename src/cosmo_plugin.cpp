@@ -517,7 +517,7 @@ void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
     const std::vector<char> messageStr = rfl::msgpack::write(message);
 
-    uint64_t messageSize = messageStr.size();
+    uint32_t messageSize = htonl(messageStr.size());
     ssize_t bytesSent = transport.write(&messageSize, sizeof(messageSize), transport.context);
     if (bytesSent == -1 || static_cast<size_t>(bytesSent) != sizeof(messageSize)) {
         throw std::runtime_error("Failed to send message size.");
@@ -531,7 +531,7 @@ void RPCPeer::sendMessage(const Message& message) {
 
 std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
     // Read the message size first
-    uint64_t messageSize;
+    uint32_t messageSize;
     size_t totalBytesReceived = 0;
 
     // Read the message size (keep reading until we get the complete size)
@@ -549,6 +549,8 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
 
         totalBytesReceived += bytesReceived;
     }
+
+    messageSize = ntohl(messageSize);
 
     // Allocate a buffer of the exact message size
     std::vector<char> messageBuffer(messageSize);
