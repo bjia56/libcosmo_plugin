@@ -519,7 +519,7 @@ int main(int argc, char* argv[]) {
 
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
-    const std::vector<char> messageStr = rfl::msgpack::write<rfl::NoFieldNames>(message);
+    const std::vector<char> messageStr = rfl::msgpack::write(message);
 
     uint32_t messageSize = htonl(messageStr.size());
     ssize_t bytesSent = transport.write(&messageSize, sizeof(messageSize), transport.context);
@@ -577,7 +577,7 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
     }
 
     // Parse the message
-    auto parsed = rfl::msgpack::read<Message, rfl::NoFieldNames>(messageBuffer);
+    auto parsed = rfl::msgpack::read<Message>(messageBuffer);
     if (!parsed.has_value()) {
         throw std::runtime_error("Failed to parse RPC message");
     }
