@@ -623,31 +623,21 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        const std::vector<char> response = handler(request.params.value());
-        msg = constructResponse(request.id, response, std::nullopt);
+        const std::vector<char> response = handler(fromBytestring(request.params.value()));
+        msg = Message{
+            .id = request.id,
+            .result = toBytestring(response),
+            .error = std::nullopt
+        };
     } catch (const std::exception& ex) {
         std::cerr << "Error processing request: " << ex.what() << std::endl;
-        msg = constructResponse(request.id, std::nullopt, ex.what());
+        msg = Message{
+            .id = request.id,
+            .result = std::nullopt,
+            .error = ex.what()
+        };
     }
     sendMessage(msg);
-}
-
-// Construct an RPC request
-RPCPeer::Message RPCPeer::constructRequest(unsigned long id, const std::string& method, const std::vector<char>& params) {
-    return Message{
-        .id = id,
-        .method = method,
-        .params = params,
-    };
-}
-
-// Construct an RPC response
-RPCPeer::Message RPCPeer::constructResponse(unsigned long id, const std::optional<std::vector<char>>& result, const std::optional<std::string>& error) {
-    return Message{
-        .id = id,
-        .result = result,
-        .error = error,
-    };
 }
 
 #if defined(__COSMOPOLITAN__) || !defined(_WIN32)

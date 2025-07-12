@@ -8,14 +8,14 @@ rm -rf build-* *.elf *.com *.dbg *.so
 mkdir -p build-cosmo
 cd build-cosmo
 CC=cosmocc CXX=cosmoc++ cmake .. -DBUILD_EXE=ON
-make
+make -j
 cd ..
 
 # Build with g++
 mkdir -p build-gcc
 cd build-gcc
 CC=cc CXX=c++ cmake ..
-make
+make -j
 cd ..
 
 cp build-cosmo/cosmo.com .

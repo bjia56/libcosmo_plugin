@@ -61,16 +61,22 @@ private:
 
         unsigned long id;
         std::optional<std::string> method;
-        std::optional<std::vector<char>> params;
-        std::optional<std::vector<char>> result;
+        std::optional<rfl::Bytestring> params;
+        std::optional<rfl::Bytestring> result;
         std::optional<std::string> error;
     };
 
-    // Construct an RPC request
-    static Message constructRequest(unsigned long id, const std::string& method, const std::vector<char>& params);
+    inline rfl::Bytestring toBytestring(const std::vector<char>& data) {
+        const char* dataPtr = data.data();
+        size_t dataSize = data.size();
+        return rfl::Bytestring(reinterpret_cast<const std::byte*>(dataPtr), reinterpret_cast<const std::byte*>(dataPtr + dataSize));
+    }
 
-    // Construct an RPC response
-    static Message constructResponse(unsigned long id, const std::optional<std::vector<char>>& result, const std::optional<std::string>& error);
+    inline std::vector<char> fromBytestring(const rfl::Bytestring& bstr) {
+        const std::byte* dataPtr = bstr.data();
+        size_t dataSize = bstr.size();
+        return std::vector<char>(reinterpret_cast<const char*>(dataPtr), reinterpret_cast<const char*>(dataPtr + dataSize));
+    }
 
     // Abstract Transport implementation
     struct Transport {
@@ -180,7 +186,11 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     const std::vector<char> params = rfl::msgpack::write(std::make_tuple(std::forward<Args>(args)...));
 
     // Build the RPC request
-    Message msg = constructRequest(requestID, method, params);
+    Message msg{
+        .id = requestID,
+        .method = method,
+        .params = toBytestring(params)
+    };
 
     // Prepare response handler
     LockingQueue<Message> queue;
@@ -210,7 +220,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Deserialize the result into the expected return type
-    return rfl::msgpack::read<ReturnType>(msgResponse.result.value()).value();
+    return rfl::msgpack::read<ReturnType>(fromBytestring(msgResponse.result.value())).value();
 }
 
 #ifndef __COSMOPOLITAN__
