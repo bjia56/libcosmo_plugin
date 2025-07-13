@@ -167,13 +167,13 @@ void RPCPeer::registerHandler(const std::string& method, std::function<ReturnTyp
     std::lock_guard<std::mutex> lock(handlersMutex);
     handlers[method] = [handler](const std::vector<char>& params) -> std::vector<char> {
         // Deserialize the arguments from the MessagePack format
-        std::tuple<Args...> args = rfl::msgpack::read<std::tuple<Args...>>(params).value();
+        std::tuple<Args...> args = rfl::msgpack::read<std::tuple<Args...>, rfl::NoFieldNames>(params).value();
 
         // Call the handler with the deserialized arguments
         ReturnType result = std::apply(handler, args);
 
         // Serialize the result into a MessagePack format
-        return rfl::msgpack::write(result);
+        return rfl::msgpack::write<rfl::NoFieldNames>(result);
     };
 }
 
@@ -183,7 +183,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     unsigned long requestID = ++requestCounter;
 
     // Serialize the arguments into a MessagePack format
-    const std::vector<char> params = rfl::msgpack::write(std::make_tuple(std::forward<Args>(args)...));
+    const std::vector<char> params = rfl::msgpack::write<rfl::NoFieldNames>(std::make_tuple(std::forward<Args>(args)...));
 
     // Build the RPC request
     Message msg{
@@ -220,7 +220,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Deserialize the result into the expected return type
-    return rfl::msgpack::read<ReturnType>(fromBytestring(msgResponse.result.value())).value();
+    return rfl::msgpack::read<ReturnType, rfl::NoFieldNames>(fromBytestring(msgResponse.result.value())).value();
 }
 
 #ifndef __COSMOPOLITAN__
