@@ -61,22 +61,10 @@ private:
 
         unsigned long id;
         std::optional<std::string> method;
-        std::optional<rfl::Bytestring> params;
-        std::optional<rfl::Bytestring> result;
+        std::optional<rfl::Vectorstring> params;
+        std::optional<rfl::Vectorstring> result;
         std::optional<std::string> error;
     };
-
-    inline rfl::Bytestring toBytestring(const std::vector<char>& data) {
-        const char* dataPtr = data.data();
-        size_t dataSize = data.size();
-        return rfl::Bytestring(reinterpret_cast<const std::byte*>(dataPtr), reinterpret_cast<const std::byte*>(dataPtr + dataSize));
-    }
-
-    inline std::vector<char> fromBytestring(const rfl::Bytestring& bstr) {
-        const std::byte* dataPtr = bstr.data();
-        size_t dataSize = bstr.size();
-        return std::vector<char>(reinterpret_cast<const char*>(dataPtr), reinterpret_cast<const char*>(dataPtr + dataSize));
-    }
 
     // Abstract Transport implementation
     struct Transport {
@@ -180,16 +168,13 @@ void RPCPeer::registerHandler(const std::string& method, std::function<ReturnTyp
 template <typename ReturnType, typename... Args>
 ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     // Generate a unique request ID
-    unsigned long requestID = ++requestCounter;
-
-    // Serialize the arguments into a MessagePack format
-    const std::vector<char> params = rfl::msgpack::write<rfl::NoFieldNames>(std::make_tuple(std::forward<Args>(args)...));
+    const unsigned long requestID = ++requestCounter;
 
     // Build the RPC request
     Message msg{
         .id = requestID,
         .method = method,
-        .params = toBytestring(params)
+        .params = rfl::msgpack::write<rfl::NoFieldNames>(std::make_tuple(std::forward<Args>(args)...))
     };
 
     // Prepare response handler
@@ -220,7 +205,7 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Deserialize the result into the expected return type
-    return rfl::msgpack::read<ReturnType, rfl::NoFieldNames>(fromBytestring(msgResponse.result.value())).value();
+    return rfl::msgpack::read<ReturnType, rfl::NoFieldNames>(msgResponse.result.value()).value();
 }
 
 #ifndef __COSMOPOLITAN__

@@ -623,10 +623,9 @@ void RPCPeer::processRequest(const Message& request) {
             handler = handlers[method];
         }
 
-        const std::vector<char> response = handler(fromBytestring(request.params.value()));
         msg = Message{
             .id = request.id,
-            .result = toBytestring(response),
+            .result = handler(request.params.value()),
             .error = std::nullopt
         };
     } catch (const std::exception& ex) {
