@@ -600,8 +600,8 @@ void RPCPeer::processMessages() {
             }).detach();
         } else if (msg.id) {
             std::lock_guard<std::mutex> lock(responseQueueMutex);
-            if (responseQueue.find(msg.id) != responseQueue.end()) {
-                responseQueue[msg.id]->push(msg);
+            if (auto it = responseQueue.find(msg.id); it != responseQueue.end()) {
+                it->second->push(msg);
             }
         } else {
             throw std::runtime_error("Invalid RPC message format.");
