@@ -616,11 +616,11 @@ void RPCPeer::processRequest(const Message& request) {
         std::function<std::vector<char>(const std::vector<char>&)> handler;
         {
             std::lock_guard<std::mutex> lock(handlersMutex);
-            if (handlers.find(method) == handlers.end()) {
+            if (auto it = handlers.find(method); it == handlers.end()) {
                 throw std::runtime_error("Method not found: " + method);
+            } else {
+                handler = it->second;
             }
-
-            handler = handlers[method];
         }
 
         msg = Message{
