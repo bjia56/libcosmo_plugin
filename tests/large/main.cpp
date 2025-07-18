@@ -39,11 +39,11 @@ void registerTestHandlers(RPCPeer& peer, bool* done) {
 }
 
 void testPeerHandlers(RPCPeer& peer) {
-	for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 1000; i++) {
         auto expected = generateLargeVector(i);
-		auto actual = peer.call<std::vector<std::string>>("generate", i);
+        auto actual = peer.call<std::vector<std::string>>("generate", i);
         assert(areVectorsEquivalent(expected, actual));
-	}
+    }
     peer.call<int>("done");
 }
 
