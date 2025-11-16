@@ -26,7 +26,7 @@ on:
 
 jobs:
   build_exe:
-    name: ${{ inputs.test }} [cosmo]
+    name: ${{ inputs.test }}/${{ inputs.encoding }} [cosmo]
     runs-on: ubuntu-latest
 
     steps:
@@ -54,7 +54,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.test }}-exe
+          name: ${{ inputs.test }}-${{ inputs.encoding }}-exe
           path: tests/${{ inputs.test }}/build/cosmo.com
 
       - name: Interactive debugging
@@ -62,7 +62,7 @@ jobs:
         if: ${{ always() && inputs.debug_cosmo }}
 
   build_test_native:
-    name: ${{ inputs.test }} [${{ matrix.os }} ${{ matrix.arch }}]
+    name: ${{ inputs.test }}/${{ inputs.encoding }} [${{ matrix.os }} ${{ matrix.arch }}]
     needs: build_exe
     runs-on: ${{ matrix.runner }}
     strategy:
