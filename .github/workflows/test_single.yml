@@ -6,6 +6,9 @@ on:
       test:
         required: true
         type: string
+      encoding:
+        required: false
+        type: string
       debug_cosmo:
         required: false
         type: boolean
@@ -16,6 +19,9 @@ on:
     inputs:
       test:
         required: true
+        type: string
+      encoding:
+        required: false
         type: string
 
 jobs:
@@ -42,7 +48,7 @@ jobs:
       - name: Build exe ${{ inputs.test }}
         run: |
           cd tests/${{ inputs.test }}
-          CC=cosmocc CXX=cosmoc++ cmake -B build -DBUILD_EXE=ON
+          CC=cosmocc CXX=cosmoc++ cmake -B build -DBUILD_EXE=ON ${{ inputs.encoding == 'json' && '-DUSE_JSON_ENCODING=ON' || '' }}
           cmake --build build --parallel 4
 
       - name: Upload artifact

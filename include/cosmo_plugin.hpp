@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <rfl/msgpack.hpp>
+#include <rfl/json.hpp>
 #include <rfl.hpp>
 
 #if defined(_MSC_VER)
@@ -34,12 +35,18 @@ typedef SSIZE_T ssize_t;
     #pragma warning Unknown dynamic link import/export semantics.
 #endif
 
-extern "C" EXPORT void cosmo_rpc_initialization(long, long);
+extern "C" EXPORT void cosmo_rpc_initialization(long, long, long);
+extern "C" EXPORT void cosmo_rpc_teardown();
 
 #endif // __COSMOPOLITAN__
 
 class RPCPeer {
 public:
+    enum ProtocolEncoding {
+        MSGPACK = 0,
+        JSON
+    };
+
     // Register a handler for a specific method
     template <typename ReturnType, typename... Args>
     void registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler);
@@ -63,6 +70,15 @@ private:
         std::optional<std::string> method;
         std::optional<rfl::Vectorstring> params;
         std::optional<rfl::Vectorstring> result;
+        std::optional<std::string> error;
+    };
+
+    // Keep fields in sync with struct Message
+    struct JSONMessage {
+        unsigned long id;
+        std::optional<std::string> method;
+        std::optional<std::string> params;
+        std::optional<std::string> result;
         std::optional<std::string> error;
     };
 
@@ -94,11 +110,22 @@ private:
     std::optional<Message> receiveMessage();
     void processRequest(const Message& request);
 
+    // Protocol encoding
+    enum ProtocolEncoding encoding;
+
+    // Helper function to convert string and vector<char>
+    static std::vector<char> stringToVectorString(const std::string& str) {
+        return std::vector<char>(str.begin(), str.end());
+    }
+    static std::string vectorStringToString(const std::vector<char>& vec) {
+        return std::string(vec.begin(), vec.end());
+    }
+
 #ifdef __COSMOPOLITAN__
     friend class PluginHost;
 #else
     friend class Plugin;
-    friend void cosmo_rpc_initialization(long, long);
+    friend void cosmo_rpc_initialization(long, long, long);
 #endif // __COSMOPOLITAN__
     friend class MockPeer;
 };
@@ -113,7 +140,7 @@ public:
         FORK
     };
 
-    PluginHost(const std::string& pluginPath, LaunchMethod launchMethod = AUTO);
+    PluginHost(const std::string& pluginPath, LaunchMethod launchMethod = AUTO, ProtocolEncoding encoding = MSGPACK);
     ~PluginHost();
 
     void initialize();
@@ -133,9 +160,9 @@ public:
     ~Plugin();
 
 private:
-    Plugin();
+    Plugin(ProtocolEncoding encoding);
 
-    friend void cosmo_rpc_initialization(long, long);
+    friend void cosmo_rpc_initialization(long, long, long);
 };
 
 #endif // __COSMOPOLITAN__
@@ -153,15 +180,24 @@ private:
 template <typename ReturnType, typename... Args>
 void RPCPeer::registerHandler(const std::string& method, std::function<ReturnType(Args...)> handler) {
     std::lock_guard<std::mutex> lock(handlersMutex);
-    handlers[method] = [handler](const std::vector<char>& params) -> std::vector<char> {
-        // Deserialize the arguments from the MessagePack format
-        std::tuple<Args...> args = rfl::msgpack::read<std::tuple<Args...>, rfl::NoFieldNames>(params).value();
+    handlers[method] = [handler, this](const std::vector<char>& params) -> std::vector<char> {
+        // Deserialize the arguments from the encoding format
+        std::tuple<Args...> args;
+        if (encoding == MSGPACK) {
+            args = rfl::msgpack::read<std::tuple<Args...>, rfl::NoFieldNames>(params).value();
+        } else {
+            std::string paramsStr = vectorStringToString(params);
+            args = rfl::json::read<std::tuple<Args...>>(paramsStr).value();
+        }
 
         // Call the handler with the deserialized arguments
         ReturnType result = std::apply(handler, args);
 
-        // Serialize the result into a MessagePack format
-        return rfl::msgpack::write<rfl::NoFieldNames>(result);
+        // Serialize the result into the encoding format
+        return (
+            encoding == MSGPACK ? rfl::msgpack::write<rfl::NoFieldNames>(result)
+                                : stringToVectorString(rfl::json::write(result))
+        );
     };
 }
 
@@ -174,7 +210,10 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     Message msg{
         .id = requestID,
         .method = method,
-        .params = rfl::msgpack::write<rfl::NoFieldNames>(std::make_tuple(std::forward<Args>(args)...))
+        .params = (
+            encoding == MSGPACK ? rfl::msgpack::write<rfl::NoFieldNames>(std::make_tuple(std::forward<Args>(args)...))
+                                : stringToVectorString(rfl::json::write(std::make_tuple(std::forward<Args>(args)...)))
+        )
     };
 
     // Prepare response handler
@@ -205,7 +244,14 @@ ReturnType RPCPeer::call(const std::string& method, Args&&... args) {
     }
 
     // Deserialize the result into the expected return type
-    return rfl::msgpack::read<ReturnType, rfl::NoFieldNames>(msgResponse.result.value()).value();
+    ReturnType result;
+    if (encoding == MSGPACK) {
+        result = rfl::msgpack::read<ReturnType, rfl::NoFieldNames>(msgResponse.result.value()).value();
+    } else {
+        std::string resultStr = vectorStringToString(msgResponse.result.value());
+        result = rfl::json::read<ReturnType>(resultStr).value();
+    }
+    return result;
 }
 
 #ifndef __COSMOPOLITAN__

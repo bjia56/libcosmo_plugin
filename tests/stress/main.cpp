@@ -62,7 +62,11 @@ int main(int argc, char *argv[]) {
     std::string objectPath = cwd + "/" + argv[1];
 
     std::cout << "Populating host functions..." << std::endl;
-    PluginHost plugin(objectPath);
+    PluginHost::ProtocolEncoding encoding = PluginHost::ProtocolEncoding::MSGPACK;
+#ifdef USE_JSON_ENCODING
+    encoding = PluginHost::ProtocolEncoding::JSON;
+#endif
+    PluginHost plugin(objectPath, PluginHost::LaunchMethod::AUTO, encoding);
     bool done = false;
     registerTestHandlers(plugin, &done);
 

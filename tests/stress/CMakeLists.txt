@@ -32,6 +32,11 @@ endif()
 target_include_directories(${BINARY_NAME} PRIVATE
     ${LIBCOSMO_PLUGIN_INCLUDE_DIRS}
 )
+
+if(USE_JSON_ENCODING)
+    target_compile_definitions(${BINARY_NAME} PRIVATE USE_JSON_ENCODING)
+endif()
+
 if(WIN32)
     target_link_libraries(${BINARY_NAME} PUBLIC Threads::Threads wsock32 ws2_32)
 else()

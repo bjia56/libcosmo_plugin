@@ -167,7 +167,7 @@ static pid_t launchSubprocessWithEnv(const char* program, const char* argv[], co
 
 struct PluginHost::impl {
     void* dynlibHandle = nullptr;
-    void (*cosmo_rpc_initialization)(long, long);
+    void (*cosmo_rpc_initialization)(long, long, long);
     void (*cosmo_rpc_teardown)();
 
     int childPID = 0;
@@ -191,7 +191,7 @@ struct PluginHost::impl {
     }
 };
 
-PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod launchMethod) : pluginPath(pluginPath), pimpl(new impl) {
+PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod launchMethod, PluginHost::ProtocolEncoding encoding) : pluginPath(pluginPath), pimpl(new impl) {
     if (launchMethod == AUTO) {
         if (IsXnu() && !IsXnuSilicon()) {
             launchMethod = FORK;
@@ -202,6 +202,7 @@ PluginHost::PluginHost(const std::string& pluginPath, PluginHost::LaunchMethod l
         }
     }
     this->launchMethod = launchMethod;
+    this->encoding = encoding;
 }
 
 PluginHost::~PluginHost() {}
@@ -220,7 +221,7 @@ void PluginHost::initialize() {
         }
 
         // Get the address of the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(long, long)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
+        pimpl->cosmo_rpc_initialization = reinterpret_cast<void(*)(long, long, long)>(cosmo_dltramp(cosmo_dlsym(pimpl->dynlibHandle, "cosmo_rpc_initialization")));
         if (!pimpl->cosmo_rpc_initialization) {
             throw std::runtime_error("Failed to find symbol: cosmo_rpc_initialization: " + std::string(cosmo_dlerror()));
         }
@@ -232,14 +233,15 @@ void PluginHost::initialize() {
         }
 
         // Call the cosmo_rpc_initialization function
-        pimpl->cosmo_rpc_initialization(pimpl->pipeMgr->getPluginReadFD(), pimpl->pipeMgr->getPluginWriteFD());
+        pimpl->cosmo_rpc_initialization(pimpl->pipeMgr->getPluginReadFD(), pimpl->pipeMgr->getPluginWriteFD(), static_cast<long>(encoding));
     } else if (launchMethod == FORK) {
         // posix_spawn a child process
         int pid;
         std::string readFD = std::to_string(pimpl->pipeMgr->getPluginReadFD());
         std::string writeFD = std::to_string(pimpl->pipeMgr->getPluginWriteFD());
+        std::string encodingStr = std::to_string(static_cast<long>(encoding));
 
-        const char* argv[] = {pluginPath.c_str(), readFD.c_str(), writeFD.c_str(), nullptr};
+        const char* argv[] = {pluginPath.c_str(), readFD.c_str(), writeFD.c_str(), encodingStr.c_str(), nullptr};
 
         pid = launchSubprocessWithEnv(pluginPath.c_str(), argv, nullptr);
         pimpl->childPID = pid;
@@ -344,7 +346,9 @@ struct IOManager {
     std::thread* processingThread;
 };
 
-Plugin::Plugin() {}
+Plugin::Plugin(Plugin::ProtocolEncoding encoding) {
+    this->encoding = encoding;
+}
 
 Plugin::~Plugin() {
     if (transport.context) {
@@ -367,8 +371,8 @@ struct SharedObjectContext {
 
 SharedObjectContext *sharedObjectContext = nullptr;
 
-extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD) {
-    Plugin* plugin = new Plugin();
+extern "C" EXPORT void cosmo_rpc_initialization(long readFD, long writeFD, long encoding) {
+    Plugin* plugin = new Plugin(Plugin::ProtocolEncoding(encoding));
 
     RPCPeer::Transport transport;
 #ifdef _WIN32
@@ -488,20 +492,21 @@ extern "C" EXPORT void cosmo_rpc_teardown() {
 #ifdef COSMO_PLUGIN_WANT_MAIN
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <readFD> <writeFD>" << std::endl;
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0] << " <readFD> <writeFD> <encoding>" << std::endl;
         return 1;
     }
 
     long readFD = atol(argv[1]);
     long writeFD = atol(argv[2]);
+    long encoding = atol(argv[3]);
 
     if (readFD <= 0 || writeFD <= 0) {
         std::cerr << "Invalid file descriptor." << std::endl;
         return 1;
     }
 
-    cosmo_rpc_initialization(readFD, writeFD);
+    cosmo_rpc_initialization(readFD, writeFD, encoding);
 
     while(sharedObjectContext) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -520,7 +525,20 @@ int main(int argc, char* argv[]) {
 
 void RPCPeer::sendMessage(const Message& message) {
     std::lock_guard<std::mutex> lock(sendMutex);
-    const std::vector<char> messageStr = rfl::msgpack::write<rfl::NoFieldNames>(message);
+    const std::vector<char> messageStr = [message, this]() {
+        if (encoding == MSGPACK) {
+            return rfl::msgpack::write<rfl::NoFieldNames>(message);
+        } else {
+            JSONMessage msg = {
+                .id = message.id,
+                .method = message.method,
+                .params = message.params.has_value() ? std::make_optional(vectorStringToString(message.params.value())) : std::nullopt,
+                .result = message.result.has_value() ? std::make_optional(vectorStringToString(message.result.value())) : std::nullopt,
+                .error = message.error
+            };
+            return stringToVectorString(rfl::json::write(msg));
+        }
+    }();
 
     uint32_t messageSize = htonl(messageStr.size());
     ssize_t bytesSent = transport.write(&messageSize, sizeof(messageSize), transport.context);
@@ -578,10 +596,29 @@ std::optional<RPCPeer::Message> RPCPeer::receiveMessage() {
     }
 
     // Parse the message
-    auto parsed = rfl::msgpack::read<Message, rfl::NoFieldNames>(messageBuffer);
+    auto parsed = [messageBuffer, this]() -> rfl::Result<Message> {
+        if (encoding == MSGPACK) {
+            return rfl::msgpack::read<Message, rfl::NoFieldNames>(messageBuffer);
+        } else {
+            std::string messageStr = vectorStringToString(messageBuffer);
+            auto res = rfl::json::read<JSONMessage>(messageStr);
+            if (!res.has_value()) {
+                return rfl::Result<Message>(rfl::Unexpected(res.error()));
+            }
+            JSONMessage jsonMsg = res.value();
+            return Message{
+                .id = jsonMsg.id,
+                .method = jsonMsg.method,
+                .params = jsonMsg.params.has_value() ? std::make_optional(stringToVectorString(jsonMsg.params.value())) : std::nullopt,
+                .result = jsonMsg.result.has_value() ? std::make_optional(stringToVectorString(jsonMsg.result.value())) : std::nullopt,
+                .error = jsonMsg.error
+            };
+        }
+    }();
     if (!parsed.has_value()) {
         throw std::runtime_error("Failed to parse RPC message");
     }
+
 
     return parsed.value();
 }

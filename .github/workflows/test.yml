@@ -17,6 +17,10 @@ jobs:
           - stress
           - large
           - signed-unsigned
+        encoding:
+          - msgpack
+          - json
     uses: ./.github/workflows/test_single.yml
     with:
       test: ${{ matrix.test }}
+      encoding: ${{ matrix.encoding }}
