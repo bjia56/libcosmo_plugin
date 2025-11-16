@@ -110,7 +110,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.test }}-exe
+          name: ${{ inputs.test }}-${{ inputs.encoding }}-exe
           path: .
 
       - name: Mark executable
